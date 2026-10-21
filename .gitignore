@@ -1,0 +1,27 @@
+# Android / Gradle
+.gradle/
+build/
+local.properties
+.idea/
+*.iml
+.kotlin/
+captures/
+.externalNativeBuild/
+.cxx/
+
+# Python
+__pycache__/
+*.egg-info/
+.venv/
+.pytest_cache/
+
+# Data and runs (never commit raw classroom footage)
+data/synth/
+data/real/
+runs/
+wandb/
+mlruns/
+*.pt
+*.onnx
+# Track a shipped model explicitly with `git add -f` (or Git LFS) when it exists.
+*.tflite
