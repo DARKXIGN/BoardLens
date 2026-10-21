@@ -52,12 +52,13 @@ bl-render-slides --out data/synth/clean --n 500
 bl-make-pairs   --clean data/synth/clean --out data/synth/pairs --burst 5 --fixed-scale 4
 bl-train-sr     --data data/synth/pairs --scale 4 --frames 5 --epochs 50 --out runs/sr_x4_b5
 bl-export       --ckpt runs/sr_x4_b5/best.pt --out app/src/main/assets/sr_x4.tflite   # needs litert-torch
-bl-eval         --gt gt.jsonl --pred preds.jsonl --by variant distance_m
+bl-gt           --eval data/real/eval --pdf lecture.pdf --out data/real/gt.jsonl   # needs [pdf]
+bl-eval         --gt data/real/gt.jsonl --pred data/real/eval --by variant distance_m
 ```
 
 ## Evaluation
 
-Primary metric is character error rate (CER) of ML Kit OCR on the phone, baseline vs. enhanced, broken down by viewing distance. Secondary: per-stage latency, FPS, battery and thermal behavior on a named device. PSNR is logged during training but does not decide anything: a model can improve PSNR while making text harder to read. See [docs/design.md](docs/design.md).
+Primary metric is character error rate (CER) of ML Kit OCR on the phone, baseline vs. enhanced, broken down by viewing distance. The full capture → ground truth → scoring workflow is in [docs/evaluation.md](docs/evaluation.md). Secondary: per-stage latency, FPS, battery and thermal behavior on a named device. PSNR is logged during training but does not decide anything: a model can improve PSNR while making text harder to read. See [docs/design.md](docs/design.md).
 
 ## Privacy
 

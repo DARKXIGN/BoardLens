@@ -15,6 +15,8 @@ dependencies = [
 
 [project.optional-dependencies]
 pdf = ["pypdfium2>=4"]
+# Only for tests that build PDFs with a real text layer.
+test-pdf = ["reportlab>=4"]
 train = ["torch>=2.4", "wandb"]
 # Converter formerly called AI Edge Torch. Install in a separate env if it pins torch.
 export = ["litert-torch"]
@@ -24,6 +26,7 @@ dev = ["pytest>=8"]
 bl-render-slides = "boardlens_data.render_slides:main"
 bl-make-pairs = "boardlens_data.make_pairs:main"
 bl-align = "boardlens_data.align:main"
+bl-gt = "boardlens_data.ground_truth:main"
 bl-eval = "boardlens_ml.evaluate:main"
 bl-train-sr = "boardlens_ml.train_sr:main"
 bl-export = "boardlens_ml.export:main"

@@ -10,6 +10,7 @@ Applies to any real classroom footage used for training or evaluation.
 ## While recording
 
 - Frame the board or screen only. No faces; if a person enters the frame, discard those frames.
+- The app's evaluation capture saves only the board crop (selected corners plus a small margin), never the full camera frame. People outside the board area are not stored, but someone standing in front of the board would be: check the crops and delete such sessions ("Delete last session", or remove the folder).
 - No audio.
 - Log per session: room, seat row, measured distance to the board (m), approximate viewing angle, lighting, phone model, zoom ratio.
 

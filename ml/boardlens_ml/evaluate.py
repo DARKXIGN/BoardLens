@@ -1,10 +1,13 @@
 """Score OCR output against ground truth, sliced by pipeline variant and distance.
 
-    bl-eval --gt data/real/gt.jsonl --pred results/preds.jsonl --by variant distance_m
+    bl-eval --gt gt.jsonl --pred eval/ --by variant distance_m
 
-gt.jsonl:    {"id": "row12_0042", "text": "..."}
-preds.jsonl: {"id": "row12_0042", "variant": "baseline", "distance_m": 12, "pred": "..."}
-             any extra keys (lighting, angle_deg, device) can be used with --by.
+--pred takes preds.jsonl files or folders (searched recursively for preds.jsonl),
+so the eval folder pulled from the phone can be passed as is.
+
+gt.jsonl:    {"id": "...", "text": "...", "ok": true}   (from bl-gt; "ok": false rows are skipped)
+preds.jsonl: {"id": "...", "variant": "bicubic", "distance_m": 12, "pred": "..."}
+             any extra keys (note, session, device) can be used with --by.
 
 The numbers that go in the write-up must come from ML Kit running on the
 phone (the app's evaluation export), so desktop runs here only score files.
@@ -23,8 +26,28 @@ from .metrics import ErrorCounts
 
 
 def read_jsonl(path: Path) -> list[dict]:
-    with open(path) as f:
+    with open(path, encoding="utf-8") as f:
         return [json.loads(line) for line in f if line.strip()]
+
+
+def expand(paths: list[Path], name: str) -> list[Path]:
+    """Files as given; folders searched recursively for `name`."""
+    out = []
+    for p in paths:
+        out.extend(sorted(p.rglob(name)) if p.is_dir() else [p])
+    return out
+
+
+def load_ground_truth(paths: list[Path]) -> tuple[dict[str, str], int]:
+    """id -> text, skipping rows bl-gt marked as needing review. Returns (gt, skipped)."""
+    gt, skipped = {}, 0
+    for path in paths:
+        for r in read_jsonl(path):
+            if r.get("ok", True) is False:
+                skipped += 1
+                continue
+            gt[r["id"]] = r["text"]
+    return gt, skipped
 
 
 def group_rates(gt: dict[str, str], preds: list[dict], keys: list[str], lowercase: bool):
@@ -51,19 +74,22 @@ def to_markdown(keys: list[str], groups: dict[tuple, ErrorCounts]) -> str:
 
 def main(argv: list[str] | None = None) -> None:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--gt", type=Path, required=True)
-    ap.add_argument("--pred", type=Path, required=True)
+    ap.add_argument("--gt", type=Path, nargs="+", required=True)
+    ap.add_argument("--pred", type=Path, nargs="+", required=True, help="preds.jsonl files or folders")
     ap.add_argument("--by", nargs="*", default=["variant", "distance_m"])
     ap.add_argument("--lowercase", action="store_true", help="case-insensitive scoring")
     ap.add_argument("--csv", type=Path, help="also write the table as CSV")
     args = ap.parse_args(argv)
 
-    gt = {r["id"]: r["text"] for r in read_jsonl(args.gt)}
-    groups, missing = group_rates(gt, read_jsonl(args.pred), args.by, args.lowercase)
+    gt, skipped = load_ground_truth(args.gt)
+    preds = [r for path in expand(args.pred, "preds.jsonl") for r in read_jsonl(path)]
+    groups, missing = group_rates(gt, preds, args.by, args.lowercase)
 
     print(to_markdown(args.by, groups))
+    if skipped:
+        print(f"\nnote: {skipped} ground-truth rows need review (ok=false) and were skipped", file=sys.stderr)
     if missing:
-        print(f"\nwarning: {missing} predictions had no ground truth", file=sys.stderr)
+        print(f"warning: {missing} predictions had no usable ground truth", file=sys.stderr)
 
     if args.csv:
         with open(args.csv, "w", newline="") as f:

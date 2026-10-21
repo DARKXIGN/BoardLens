@@ -1,11 +1,16 @@
 package com.boardlens.ui
 
 import android.app.Application
+import android.os.Build
 import android.util.Log
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.lifecycle.AndroidViewModel
 import com.boardlens.camera.FrameAnalyzer
+import com.boardlens.eval.EvalSession
+import com.boardlens.eval.EvalStore
+import com.boardlens.eval.Evaluator
+import com.boardlens.eval.parseDistanceMeters
 import com.boardlens.pipeline.AcceptAllGate
 import com.boardlens.pipeline.BicubicUpscaleEnhancer
 import com.boardlens.pipeline.Frame
@@ -67,7 +72,26 @@ data class ReaderUiState(
     val processedImage: ImageBitmap? = null,
     val enhancerId: String = "",
     val selection: RegionSelection? = null,
+    val eval: EvalUiState = EvalUiState(),
 )
+
+/** Evaluation capture panel (docs/evaluation.md). */
+data class EvalUiState(
+    val panelOpen: Boolean = false,
+    val distanceText: String = "",
+    val note: String = "",
+    /** Frames still to save in the current capture; 0 = not capturing. */
+    val captureRemaining: Int = 0,
+    val running: Boolean = false,
+    val progressDone: Int = 0,
+    val progressTotal: Int = 0,
+    val message: String? = null,
+    val sessionCount: Int = 0,
+    val lastSession: String? = null,
+    val folder: String = "",
+) {
+    val busy get() = captureRemaining > 0 || running
+}
 
 data class DisplaySettings(
     val fontSizeSp: Int = 36,
@@ -103,8 +127,10 @@ class ReaderViewModel(app: Application) : AndroidViewModel(app) {
 
     private val bicubic = BicubicUpscaleEnhancer()
 
+    private val sharpnessGate: SharpnessGate? = if (openCvReady) SharpnessGate() else null
+
     private val pipeline = ReadingPipeline(
-        gate = if (openCvReady) SharpnessGate() else AcceptAllGate,
+        gate = sharpnessGate ?: AcceptAllGate,
         regionDetector = tracker ?: manualRegion,
         rectifier = if (openCvReady) OpenCvRectifier() else Rectifier { frame, _ -> frame.bitmap },
         enhancer = if (openCvReady) bicubic else IdentityEnhancer,
@@ -125,6 +151,21 @@ class ReaderViewModel(app: Application) : AndroidViewModel(app) {
     private var regionFrameSize: FrameSize? = null
 
     private var frozenBeforeSelection = false
+
+    private val evalStore = EvalStore(
+        java.io.File(app.getExternalFilesDir(null) ?: app.filesDir, "eval"),
+    )
+
+    /** Session being filled by the frame loop; only touched on the analysis thread. */
+    private var captureSession: EvalSession? = null
+    private var captureTarget = 0
+
+    @Volatile
+    private var zoomLinear = 0f
+
+    init {
+        analysisExecutor.execute { refreshEvalSessions() }
+    }
 
     // ---- frame loop (analysis thread) ----------------------------------------------------------
 
@@ -178,6 +219,7 @@ class ReaderViewModel(app: Application) : AndroidViewModel(app) {
                     )
                 }
                 if (changed && _settings.value.speakNewSlides) speaker.speak(text)
+                maybeCapture(frame, result.region, tracking)
             }
             .onFailure { e ->
                 Log.w(TAG, "Pipeline failed", e)
@@ -320,6 +362,153 @@ class ReaderViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
+    // ---- evaluation capture (docs/evaluation.md) -----------------------------------------------
+
+    fun toggleEvalPanel() = updateEval { it.copy(panelOpen = !it.panelOpen, message = null) }
+
+    fun setEvalDistance(text: String) = updateEval { it.copy(distanceText = text) }
+
+    fun setEvalNote(text: String) = updateEval { it.copy(note = text) }
+
+    fun onZoomChanged(linear: Float) {
+        zoomLinear = linear
+    }
+
+    /** Saves the next [frames] sharp, tracked frames of the selected board into a new session. */
+    fun startCapture(frames: Int = CAPTURE_FRAMES) {
+        val state = _ui.value
+        if (state.eval.busy) return
+        if (state.region == null) {
+            updateEval { it.copy(message = "Select the board first.") }
+            return
+        }
+        val distance = parseDistanceMeters(state.eval.distanceText)
+        if (distance == null) {
+            updateEval { it.copy(message = "Enter the distance to the board in meters, e.g. 6 or 6.5.") }
+            return
+        }
+        if (state.frozen) toggleFreeze() // capture needs live frames
+        val note = state.eval.note.trim()
+        updateEval { it.copy(captureRemaining = frames, message = "Capturing. Hold the phone the way you normally would.") }
+        analysisExecutor.execute {
+            runCatching { evalStore.newSession(distance, note) }
+                .onSuccess {
+                    captureSession = it
+                    captureTarget = frames
+                }
+                .onFailure { e ->
+                    updateEval { it.copy(captureRemaining = 0, message = "Could not create a session: ${e.message}") }
+                }
+        }
+    }
+
+    /** Analysis thread: adds the current frame to the active capture, if any. */
+    private fun maybeCapture(frame: Frame, regionPx: Quad, tracking: TrackingStatus) {
+        val session = captureSession ?: return
+        if (_ui.value.region == null) {
+            finishCapture("Capture stopped: the board area was cleared.")
+            return
+        }
+        // Lost: position is a guess. Off with a tracker: region set a moment ago, not tracked yet.
+        if (tracking == TrackingStatus.Lost || (tracker != null && tracking == TrackingStatus.Off)) return
+
+        runCatching {
+            session.save(
+                frame,
+                regionPx,
+                linkedMapOf(
+                    "tracking" to tracking.name.lowercase(),
+                    "sharpness" to sharpnessGate?.lastSharpness,
+                    "zoom_linear" to zoomLinear,
+                    "device" to "${Build.MANUFACTURER} ${Build.MODEL}",
+                    "android_sdk" to Build.VERSION.SDK_INT,
+                ),
+            )
+        }.onFailure { e ->
+            Log.w(TAG, "Saving capture failed", e)
+            finishCapture("Saving failed: ${e.message}")
+            return
+        }
+        val remaining = captureTarget - session.saved
+        if (remaining <= 0) {
+            finishCapture("Saved ${session.saved} frames to ${session.id}.")
+        } else {
+            updateEval { it.copy(captureRemaining = remaining) }
+        }
+    }
+
+    /** Analysis thread. */
+    private fun finishCapture(message: String) {
+        captureSession = null
+        captureTarget = 0
+        updateEval { it.copy(captureRemaining = 0, message = message) }
+        refreshEvalSessions()
+    }
+
+    /** Runs every saved session through each enhancer variant and writes preds.jsonl files. */
+    fun runEvaluation() {
+        if (_ui.value.eval.busy) return
+        if (!openCvReady) {
+            updateEval { it.copy(message = "OpenCV is unavailable on this device.") }
+            return
+        }
+        analyzer.paused = true
+        updateEval { it.copy(running = true, progressDone = 0, progressTotal = 0, message = "Running evaluation…") }
+        analysisExecutor.execute {
+            val evaluator = Evaluator(
+                rectifier = OpenCvRectifier(),
+                variants = listOf(IdentityEnhancer, BicubicUpscaleEnhancer()),
+                recognizerFactory = { MlKitTextRecognizer() },
+            )
+            val message = runCatching {
+                val sessions = evalStore.sessions()
+                if (sessions.isEmpty()) {
+                    "No captures yet. Capture some frames first."
+                } else {
+                    val s = evaluator.run(sessions) { done, total ->
+                        updateEval { it.copy(progressDone = done, progressTotal = total) }
+                    }
+                    val unreadable = if (s.failures > 0) " (${s.failures} unreadable)" else ""
+                    "Done: ${s.predictions} predictions for ${s.frames} frames in ${s.sessions} sessions$unreadable. " +
+                        "Copy the eval folder to your computer to score it."
+                }
+            }.getOrElse { e ->
+                Log.w(TAG, "Evaluation failed", e)
+                "Evaluation failed: ${e.message}"
+            }
+            updateEval { it.copy(running = false, message = message) }
+            val state = _ui.value
+            analyzer.paused = state.frozen || state.selection != null
+        }
+    }
+
+    /** Deletes the most recent session (e.g. a capture with the wrong distance). */
+    fun deleteLastSession() {
+        val eval = _ui.value.eval
+        val last = eval.lastSession ?: return
+        if (eval.busy) return
+        analysisExecutor.execute {
+            val ok = evalStore.delete(last)
+            updateEval { it.copy(message = if (ok) "Deleted $last." else "Could not delete $last.") }
+            refreshEvalSessions()
+        }
+    }
+
+    /** Analysis thread (file system). */
+    private fun refreshEvalSessions() {
+        val sessions = evalStore.sessions()
+        updateEval {
+            it.copy(
+                sessionCount = sessions.size,
+                lastSession = sessions.lastOrNull()?.name,
+                folder = evalStore.root.absolutePath,
+            )
+        }
+    }
+
+    private inline fun updateEval(crossinline f: (EvalUiState) -> EvalUiState) =
+        _ui.update { it.copy(eval = f(it.eval)) }
+
     override fun onCleared() {
         analysisExecutor.execute {
             pipeline.close()
@@ -337,6 +526,8 @@ class ReaderViewModel(app: Application) : AndroidViewModel(app) {
         private const val MIN_REGION_AREA = 0.005f
         /** ~2 s at the 400 ms analysis interval. */
         private const val LOST_NOTICE_FRAMES = 5
+        /** Frames per evaluation capture (~4 s of sharp frames). */
+        private const val CAPTURE_FRAMES = 10
         private const val LOST_NOTICE = "Lost the board. Point the camera back at it, or tap Adjust board."
     }
 }

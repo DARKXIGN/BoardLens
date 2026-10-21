@@ -77,7 +77,20 @@ fun ReaderScreen(vm: ReaderViewModel = viewModel()) {
                 .then(if (selection != null) Modifier.clearAndSetSemantics { } else Modifier),
         ) {
             CameraPane(vm, ui, Modifier.weight(1f).fillMaxWidth())
-            ReadingPane(ui, settings, Modifier.weight(1f).fillMaxWidth())
+            if (ui.eval.panelOpen) {
+                EvalPanel(
+                    eval = ui.eval,
+                    boardSelected = ui.region != null,
+                    onDistanceChange = vm::setEvalDistance,
+                    onNoteChange = vm::setEvalNote,
+                    onCapture = { vm.startCapture() },
+                    onRun = vm::runEvaluation,
+                    onDeleteLast = vm::deleteLastSession,
+                    modifier = Modifier.weight(1f).fillMaxWidth(),
+                )
+            } else {
+                ReadingPane(ui, settings, Modifier.weight(1f).fillMaxWidth())
+            }
             Controls(vm, ui, settings)
         }
 
@@ -144,6 +157,7 @@ private fun CameraPane(vm: ReaderViewModel, ui: ReaderUiState, modifier: Modifie
             onValueChange = {
                 zoom = it
                 controller.setLinearZoom(it)
+                vm.onZoomChanged(it)
             },
             enabled = !zoomLocked,
             modifier = Modifier
@@ -305,6 +319,11 @@ private fun Controls(vm: ReaderViewModel, ui: ReaderUiState, settings: DisplaySe
                 selected = settings.upscale,
                 onClick = { vm.updateSettings { it.copy(upscale = !it.upscale) } },
                 label = { Text("Upscale") },
+            )
+            FilterChip(
+                selected = ui.eval.panelOpen,
+                onClick = vm::toggleEvalPanel,
+                label = { Text("Eval") },
             )
         }
     }
