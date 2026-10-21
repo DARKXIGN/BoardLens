@@ -1,6 +1,7 @@
 package com.boardlens.ui
 
 import android.util.Size
+import androidx.activity.compose.BackHandler
 import androidx.camera.core.ImageAnalysis
 import androidx.camera.core.resolutionselector.AspectRatioStrategy
 import androidx.camera.core.resolutionselector.ResolutionSelector
@@ -8,9 +9,13 @@ import androidx.camera.core.resolutionselector.ResolutionStrategy
 import androidx.camera.view.CameraController
 import androidx.camera.view.LifecycleCameraController
 import androidx.camera.view.PreviewView
+import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
@@ -32,9 +37,14 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.semantics.LiveRegionMode
+import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.liveRegion
 import androidx.compose.ui.semantics.semantics
@@ -44,21 +54,49 @@ import androidx.compose.ui.viewinterop.AndroidView
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
+import com.boardlens.pipeline.FitTransform
+
+/** Same 4:3 request for preview and analysis so both streams cover the same field of view. */
+private fun fourByThreeSelector(target: Size) = ResolutionSelector.Builder()
+    .setAspectRatioStrategy(AspectRatioStrategy.RATIO_4_3_FALLBACK_AUTO_STRATEGY)
+    .setResolutionStrategy(ResolutionStrategy(target, ResolutionStrategy.FALLBACK_RULE_CLOSEST_HIGHER_THEN_LOWER))
+    .build()
 
 @Composable
 fun ReaderScreen(vm: ReaderViewModel = viewModel()) {
     val ui by vm.ui.collectAsStateWithLifecycle()
     val settings by vm.settings.collectAsStateWithLifecycle()
+    val selection = ui.selection
 
-    Column(Modifier.fillMaxSize()) {
-        CameraPane(vm, Modifier.weight(1f).fillMaxWidth())
-        ReadingPane(ui, settings, Modifier.weight(1f).fillMaxWidth())
-        Controls(vm, ui, settings)
+    Box(Modifier.fillMaxSize()) {
+        // The live screen stays composed under the picker so the camera (and its zoom) keeps running.
+        Column(
+            Modifier
+                .fillMaxSize()
+                .then(if (selection != null) Modifier.clearAndSetSemantics { } else Modifier),
+        ) {
+            CameraPane(vm, ui, Modifier.weight(1f).fillMaxWidth())
+            ReadingPane(ui, settings, Modifier.weight(1f).fillMaxWidth())
+            Controls(vm, ui, settings)
+        }
+
+        if (selection != null) {
+            BackHandler(onBack = vm::cancelSelection)
+            RegionSelectorScreen(
+                selection = selection,
+                onMoveCorner = vm::moveCorner,
+                onAutoDetect = vm::autoDetect,
+                onResetCorners = vm::resetSelectionCorners,
+                onWholeFrame = vm::useWholeFrame,
+                onCancel = vm::cancelSelection,
+                onConfirm = vm::confirmSelection,
+            )
+        }
     }
 }
 
 @Composable
-private fun CameraPane(vm: ReaderViewModel, modifier: Modifier) {
+private fun CameraPane(vm: ReaderViewModel, ui: ReaderUiState, modifier: Modifier) {
     val context = LocalContext.current
     val lifecycleOwner = LocalLifecycleOwner.current
     var zoom by remember { mutableFloatStateOf(0f) }
@@ -69,17 +107,8 @@ private fun CameraPane(vm: ReaderViewModel, modifier: Modifier) {
             setImageAnalysisBackpressureStrategy(ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST)
             setImageAnalysisOutputImageFormat(ImageAnalysis.OUTPUT_IMAGE_FORMAT_RGBA_8888)
             // Text from the back row needs pixels; ask for ~2.7 MP analysis frames.
-            setImageAnalysisResolutionSelector(
-                ResolutionSelector.Builder()
-                    .setAspectRatioStrategy(AspectRatioStrategy.RATIO_4_3_FALLBACK_AUTO_STRATEGY)
-                    .setResolutionStrategy(
-                        ResolutionStrategy(
-                            Size(1920, 1440),
-                            ResolutionStrategy.FALLBACK_RULE_CLOSEST_HIGHER_THEN_LOWER,
-                        ),
-                    )
-                    .build(),
-            )
+            setImageAnalysisResolutionSelector(fourByThreeSelector(Size(1920, 1440)))
+            setPreviewResolutionSelector(fourByThreeSelector(Size(1440, 1080)))
             setImageAnalysisAnalyzer(vm.analysisExecutor, vm.analyzer)
         }
     }
@@ -90,31 +119,59 @@ private fun CameraPane(vm: ReaderViewModel, modifier: Modifier) {
     }
 
     Column(modifier) {
-        AndroidView(
-            factory = { ctx ->
-                PreviewView(ctx).apply {
-                    // FIT_CENTER keeps the whole analysis frame visible, which makes
-                    // mapping a tap to frame coordinates (MVP step: region select) simple.
-                    scaleType = PreviewView.ScaleType.FIT_CENTER
-                    this.controller = controller
-                }
-            },
-            modifier = Modifier
-                .weight(1f)
-                .fillMaxWidth()
-                .semantics { contentDescription = "Camera view of the board" },
-        )
-        // TODO(MVP week 1): tap four corners on the preview -> vm.setRegion(normalizedQuad).
+        Box(Modifier.weight(1f).fillMaxWidth()) {
+            AndroidView(
+                factory = { ctx ->
+                    PreviewView(ctx).apply {
+                        // FIT_CENTER shows the whole frame, so the overlay below lines up with
+                        // the analysis frame using a single letterbox transform.
+                        scaleType = PreviewView.ScaleType.FIT_CENTER
+                        this.controller = controller
+                    }
+                },
+                modifier = Modifier
+                    .fillMaxSize()
+                    .semantics { contentDescription = "Camera view of the board" },
+            )
+            RegionOverlay(ui, Modifier.fillMaxSize())
+        }
+
+        // Zoom changes what the frame covers, which would move a selected region off the board.
+        val zoomLocked = ui.region != null
         Slider(
             value = zoom,
             onValueChange = {
                 zoom = it
                 controller.setLinearZoom(it)
             },
+            enabled = !zoomLocked,
             modifier = Modifier
                 .padding(horizontal = 16.dp)
-                .semantics { contentDescription = "Zoom" },
+                .semantics {
+                    contentDescription = if (zoomLocked) "Zoom, locked while a board area is selected" else "Zoom"
+                },
         )
+    }
+}
+
+/** Draws the selected region on the live preview. Approximate: preview and analysis share a 4:3 field of view. */
+@Composable
+private fun RegionOverlay(ui: ReaderUiState, modifier: Modifier) {
+    val region = ui.region ?: return
+    val frame = ui.frameSize ?: return
+    BoxWithConstraints(modifier) {
+        val fit = FitTransform.fitCenter(frame.width, frame.height, constraints.maxWidth.toFloat(), constraints.maxHeight.toFloat())
+        Canvas(Modifier.fillMaxSize()) {
+            val pts = region.points().map { fit.toView(it) }
+            val path = Path().apply {
+                moveTo(pts[0].x, pts[0].y)
+                for (i in 1..3) lineTo(pts[i].x, pts[i].y)
+                close()
+            }
+            drawPath(path, Color.Black.copy(alpha = 0.6f), style = Stroke(width = 6.dp.toPx()))
+            drawPath(path, Color(0xFFFFD400), style = Stroke(width = 2.5.dp.toPx()))
+            pts.forEach { drawCircle(Color(0xFFFFD400), radius = 4.dp.toPx(), center = Offset(it.x, it.y)) }
+        }
     }
 }
 
@@ -126,37 +183,77 @@ private fun ReadingPane(ui: ReaderUiState, settings: DisplaySettings, modifier: 
         else -> MaterialTheme.colorScheme.surface to MaterialTheme.colorScheme.onSurface
     }
     Box(modifier.background(background).padding(16.dp)) {
-        Column(Modifier.verticalScroll(rememberScrollState())) {
-            if (ui.slideChanges > 0) {
-                // Live region: TalkBack announces only this short line, not every OCR refresh.
+        val image = ui.processedImage
+        if (settings.showImage && image != null) {
+            // What OCR actually sees: rectified (and upscaled) board. Useful for debugging and demos.
+            Image(
+                bitmap = image,
+                contentDescription = ui.text.ifBlank { "Corrected view of the board" },
+                contentScale = ContentScale.Fit,
+                modifier = Modifier.fillMaxSize(),
+            )
+        } else {
+            Column(Modifier.verticalScroll(rememberScrollState())) {
+                if (ui.slideChanges > 0) {
+                    // Live region: TalkBack announces only this short line, not every OCR refresh.
+                    Text(
+                        "New slide (${ui.slideChanges})",
+                        color = foreground,
+                        fontSize = 16.sp,
+                        modifier = Modifier.semantics { liveRegion = LiveRegionMode.Polite },
+                    )
+                }
                 Text(
-                    "New slide (${ui.slideChanges})",
+                    text = ui.text.ifBlank {
+                        if (ui.region == null) "Point the camera at the board, then tap Select board."
+                        else "Looking for text…"
+                    },
                     color = foreground,
-                    fontSize = 16.sp,
-                    modifier = Modifier.semantics { liveRegion = LiveRegionMode.Polite },
+                    fontSize = settings.fontSizeSp.sp,
+                    lineHeight = (settings.fontSizeSp * 1.3f).sp,
                 )
             }
+        }
+
+        val notice = ui.notice
+        if (notice != null) {
+            // Announced once by TalkBack; changes only on user-relevant events.
             Text(
-                text = ui.text.ifBlank { "Point the camera at the board." },
+                notice,
                 color = foreground,
-                fontSize = settings.fontSizeSp.sp,
-                lineHeight = (settings.fontSizeSp * 1.3f).sp,
+                fontSize = 16.sp,
+                modifier = Modifier
+                    .align(Alignment.BottomStart)
+                    .background(background.copy(alpha = 0.85f))
+                    .semantics { liveRegion = LiveRegionMode.Polite },
+            )
+        } else {
+            // Debug status refreshes every frame, so it is deliberately not a live region.
+            val total = ui.timingsMs.values.sum()
+            val status = ui.error ?: if (total > 0) "%.0f ms/frame · %s".format(total, ui.enhancerId) else ""
+            Text(
+                status,
+                color = foreground.copy(alpha = 0.6f),
+                fontSize = 12.sp,
+                modifier = Modifier
+                    .align(Alignment.BottomEnd)
+                    .background(background.copy(alpha = 0.8f)),
             )
         }
-        val total = ui.timingsMs.values.sum()
-        val status = ui.error ?: if (total > 0) "%.0f ms/frame".format(total) else ""
-        Text(
-            status,
-            color = foreground.copy(alpha = 0.6f),
-            fontSize = 12.sp,
-            modifier = Modifier.align(Alignment.BottomEnd),
-        )
     }
 }
 
 @Composable
 private fun Controls(vm: ReaderViewModel, ui: ReaderUiState, settings: DisplaySettings) {
-    Column(Modifier.padding(8.dp)) {
+    Column(Modifier.padding(8.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Button(onClick = vm::startRegionSelection, modifier = Modifier.weight(1f)) {
+                Text(if (ui.region == null) "Select board" else "Adjust board")
+            }
+            if (ui.region != null) {
+                OutlinedButton(onClick = vm::clearRegion, modifier = Modifier.weight(1f)) { Text("Whole view") }
+            }
+        }
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             Button(onClick = vm::speak, modifier = Modifier.weight(1f)) { Text("Read aloud") }
             OutlinedButton(onClick = vm::toggleFreeze, modifier = Modifier.weight(1f)) {
@@ -164,7 +261,9 @@ private fun Controls(vm: ReaderViewModel, ui: ReaderUiState, settings: DisplaySe
             }
         }
         Row(
-            Modifier.fillMaxWidth(),
+            Modifier
+                .fillMaxWidth()
+                .horizontalScroll(rememberScrollState()),
             horizontalArrangement = Arrangement.spacedBy(8.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
@@ -185,6 +284,16 @@ private fun Controls(vm: ReaderViewModel, ui: ReaderUiState, settings: DisplaySe
                 selected = settings.inverted,
                 onClick = { vm.updateSettings { it.copy(inverted = !it.inverted) } },
                 label = { Text("Invert") },
+            )
+            FilterChip(
+                selected = settings.showImage,
+                onClick = { vm.updateSettings { it.copy(showImage = !it.showImage) } },
+                label = { Text("Show image") },
+            )
+            FilterChip(
+                selected = settings.upscale,
+                onClick = { vm.updateSettings { it.copy(upscale = !it.upscale) } },
+                label = { Text("Upscale") },
             )
         }
     }

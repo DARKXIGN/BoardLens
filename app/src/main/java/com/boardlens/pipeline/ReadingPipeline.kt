@@ -5,24 +5,34 @@ import android.graphics.Rect
 
 data class PipelineResult(
     val recognition: Recognition,
+    /** Image that went into OCR (after rectify + enhance). */
     val enhancedImage: Bitmap,
+    /** Region used, in frame pixels. */
     val region: Quad,
     val textRegions: List<Rect>,
+    val enhancerId: String,
     /** Wall time per stage in milliseconds, in execution order. */
     val timingsMs: Map<String, Double>,
 )
 
-/** Runs stages 2-6 on one frame. Not thread-safe: call from a single analysis thread. */
+/** Runs stages 2-6 on one frame. Not thread-safe: call every method from the single analysis thread. */
 class ReadingPipeline(
     private val stabilizer: Stabilizer = PassthroughStabilizer,
     private val regionDetector: RegionDetector,
     private val rectifier: Rectifier,
     private val textDetector: TextDetector = NoOpTextDetector,
-    private val enhancer: Enhancer = IdentityEnhancer,
+    enhancer: Enhancer = IdentityEnhancer,
     private val recognizer: TextRecognizer,
 ) : AutoCloseable {
 
     private val history = ArrayDeque<Bitmap>()
+
+    /** Swappable at runtime so baseline and learned enhancers can be compared on the same scene. */
+    var enhancer: Enhancer = enhancer
+        set(value) {
+            field = value
+            history.clear()
+        }
 
     fun process(frame: Frame): PipelineResult {
         val timer = StageTimer()
@@ -31,14 +41,15 @@ class ReadingPipeline(
             ?: Quad.fullFrame(stable.bitmap.width, stable.bitmap.height)
         val rectified = timer.measure("rectify") { rectifier.rectify(stable, region) }
         val textRegions = timer.measure("textDetect") { textDetector.detect(rectified) }
-        val enhanced = timer.measure("enhance") { enhancer.enhance(rectified, history.toList()) }
+        val activeEnhancer = this.enhancer
+        val enhanced = timer.measure("enhance") { activeEnhancer.enhance(rectified, history.toList()) }
         val recognition = timer.measure("ocr") { recognizer.recognize(enhanced) }
 
-        if (enhancer.historySize > 0) {
+        if (activeEnhancer.historySize > 0) {
             history.addLast(rectified)
-            while (history.size > enhancer.historySize) history.removeFirst()
+            while (history.size > activeEnhancer.historySize) history.removeFirst()
         }
-        return PipelineResult(recognition, enhanced, region, textRegions, timer.timings)
+        return PipelineResult(recognition, enhanced, region, textRegions, activeEnhancer.id, timer.timings)
     }
 
     /** Call when the region changes; fused history from another region is meaningless. */

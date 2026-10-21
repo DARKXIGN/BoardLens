@@ -1,7 +1,7 @@
 package com.boardlens.pipeline
 
 import android.graphics.Bitmap
-import android.graphics.PointF
+import android.graphics.Rect
 import com.google.android.gms.tasks.Tasks
 import com.google.mlkit.vision.common.InputImage
 import com.google.mlkit.vision.text.TextRecognition
@@ -12,8 +12,8 @@ import org.opencv.core.MatOfPoint2f
 import org.opencv.core.Point
 import org.opencv.core.Size
 import org.opencv.imgproc.Imgproc
-import kotlin.math.hypot
 import kotlin.math.max
+import kotlin.math.min
 import kotlin.math.roundToInt
 
 /** Baseline implementations used by the MVP. Each one is the "before" in a before/after comparison. */
@@ -23,20 +23,15 @@ object PassthroughStabilizer : Stabilizer {
 }
 
 /**
- * Uses the region the user picked on screen. Corners are stored normalized
- * (0..1) so they survive resolution and rotation changes.
+ * Uses the region the user picked. Corners are stored normalized (0..1, upright
+ * frame) so they survive resolution changes.
  */
 class ManualRegionDetector : RegionDetector {
     @Volatile
     var normalizedQuad: Quad? = null
 
-    override fun detect(frame: Frame): Quad? {
-        val q = normalizedQuad ?: return null
-        val w = frame.bitmap.width.toFloat()
-        val h = frame.bitmap.height.toFloat()
-        fun s(p: PointF) = PointF(p.x * w, p.y * h)
-        return Quad(s(q.tl), s(q.tr), s(q.br), s(q.bl))
-    }
+    override fun detect(frame: Frame): Quad? =
+        normalizedQuad?.denormalize(frame.bitmap.width, frame.bitmap.height)
 }
 
 /** Perspective correction with OpenCV. Requires OpenCVLoader.initLocal() to have run. */
@@ -46,10 +41,11 @@ class OpenCvRectifier(private val maxLongSide: Int = 2048) : Rectifier {
         val src = frame.bitmap
         if (region == Quad.fullFrame(src.width, src.height)) return src
 
-        // Output size from the longer of each pair of opposite edges.
-        var outW = max(dist(region.tl, region.tr), dist(region.bl, region.br))
-        var outH = max(dist(region.tl, region.bl), dist(region.tr, region.br))
-        val scale = minOf(1.0, maxLongSide / max(outW, outH))
+        // Output size from the longer of each pair of opposite edges, so no
+        // source pixels are thrown away. Upscaling is the Enhancer's job.
+        var outW = max(region.tl.distanceTo(region.tr), region.bl.distanceTo(region.br)).toDouble()
+        var outH = max(region.tl.distanceTo(region.bl), region.tr.distanceTo(region.br)).toDouble()
+        val scale = min(1.0, maxLongSide / max(outW, outH))
         outW *= scale
         outH *= scale
         val w = outW.roundToInt().coerceAtLeast(1)
@@ -72,16 +68,48 @@ class OpenCvRectifier(private val maxLongSide: Int = 2048) : Rectifier {
             srcPts.release(); dstPts.release(); input.release(); output.release(); homography.release()
         }
     }
-
-    private fun dist(a: PointF, b: PointF) = hypot((a.x - b.x).toDouble(), (a.y - b.y).toDouble())
 }
 
 object NoOpTextDetector : TextDetector {
-    override fun detect(image: Bitmap) = emptyList<android.graphics.Rect>()
+    override fun detect(image: Bitmap) = emptyList<Rect>()
 }
 
 object IdentityEnhancer : Enhancer {
+    override val id = "none"
     override fun enhance(current: Bitmap, history: List<Bitmap>) = current
+}
+
+/**
+ * The standard super-resolution baseline: bicubic upscaling until the long side
+ * reaches [targetLongSide] (at most [maxFactor]x). ML Kit recognizes small glyphs
+ * better once they cover more pixels, so the learned model has to beat this,
+ * not the raw frame.
+ */
+class BicubicUpscaleEnhancer(
+    private val targetLongSide: Int = 1600,
+    private val maxFactor: Double = 3.0,
+) : Enhancer {
+    override val id = "bicubic"
+
+    override fun enhance(current: Bitmap, history: List<Bitmap>): Bitmap {
+        val longSide = max(current.width, current.height)
+        val factor = min(targetLongSide.toDouble() / longSide, maxFactor)
+        if (factor <= 1.05) return current
+
+        val w = (current.width * factor).roundToInt()
+        val h = (current.height * factor).roundToInt()
+        val input = Mat()
+        val output = Mat()
+        try {
+            Utils.bitmapToMat(current, input)
+            Imgproc.resize(input, output, Size(w.toDouble(), h.toDouble()), 0.0, 0.0, Imgproc.INTER_CUBIC)
+            val result = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
+            Utils.matToBitmap(output, result)
+            return result
+        } finally {
+            input.release(); output.release()
+        }
+    }
 }
 
 /** ML Kit on-device Latin OCR (bundled model, no network). Called from the analysis thread. */

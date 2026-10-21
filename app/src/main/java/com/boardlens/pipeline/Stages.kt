@@ -1,7 +1,6 @@
 package com.boardlens.pipeline
 
 import android.graphics.Bitmap
-import android.graphics.PointF
 import android.graphics.Rect
 
 /*
@@ -15,19 +14,7 @@ import android.graphics.Rect
 /** One camera frame, already rotated upright. */
 class Frame(val bitmap: Bitmap, val timestampNs: Long)
 
-/** Board corners in frame pixel coordinates: top-left, top-right, bottom-right, bottom-left. */
-data class Quad(val tl: PointF, val tr: PointF, val br: PointF, val bl: PointF) {
-    fun points(): List<PointF> = listOf(tl, tr, br, bl)
-
-    companion object {
-        fun fullFrame(width: Int, height: Int) = Quad(
-            PointF(0f, 0f),
-            PointF(width.toFloat(), 0f),
-            PointF(width.toFloat(), height.toFloat()),
-            PointF(0f, height.toFloat()),
-        )
-    }
-}
+// Quad and Pt live in Geometry.kt (pure Kotlin, unit-tested on the JVM).
 
 data class TextLine(val text: String, val box: Rect?)
 
@@ -61,6 +48,8 @@ fun interface TextDetector {
  * oldest first, up to [historySize].
  */
 interface Enhancer {
+    /** Short stable name used in logs and evaluation output ("none", "bicubic", "sr_x4_b5", ...). */
+    val id: String
     val historySize: Int get() = 0
     fun enhance(current: Bitmap, history: List<Bitmap>): Bitmap
 }

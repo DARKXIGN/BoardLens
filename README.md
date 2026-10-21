@@ -12,9 +12,9 @@ The research question: **how much does a learned multi-frame super-resolution st
 |---|---|---|
 | 1. Capture | CameraX, ~2.7 MP analysis frames, linear zoom | Optical tele lens selection |
 | 2. Stabilize | Passthrough | Feature-based stabilization |
-| 3. Region + rectify | Manual corners (TODO) + OpenCV homography | Learned board detector |
+| 3. Region + rectify | OpenCV quad detection proposes corners, user adjusts on a frozen frame; OpenCV homography | Learned board detector, tracking |
 | 4. Text detection | Whole region | Text-box detector (crop before SR) |
-| 5. Enhance | Identity | **Multi-frame SR (`ml/`)** |
+| 5. Enhance | Bicubic upscale to 1600 px long side (toggle: none) | **Multi-frame SR (`ml/`)** |
 | 6. OCR | ML Kit on-device Latin | — |
 | 7. Output | Large text, contrast/invert, TTS, slide-change cue | Re-rendered layout |
 
