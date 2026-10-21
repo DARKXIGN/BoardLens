@@ -27,6 +27,16 @@ fun interface Stabilizer {
     fun stabilize(frame: Frame): Frame
 }
 
+/** Stage 2 (before anything else): reject frames not worth processing, e.g. motion-blurred ones. */
+interface FrameGate {
+    fun accept(frame: Frame): Boolean
+    fun reset() {}
+}
+
+object AcceptAllGate : FrameGate {
+    override fun accept(frame: Frame) = true
+}
+
 /** Stage 3a: find the board / slide. Returning null means "use the whole frame". */
 fun interface RegionDetector {
     fun detect(frame: Frame): Quad?

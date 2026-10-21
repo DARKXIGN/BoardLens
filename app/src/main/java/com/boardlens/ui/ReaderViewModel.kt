@@ -6,6 +6,7 @@ import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.lifecycle.AndroidViewModel
 import com.boardlens.camera.FrameAnalyzer
+import com.boardlens.pipeline.AcceptAllGate
 import com.boardlens.pipeline.BicubicUpscaleEnhancer
 import com.boardlens.pipeline.Frame
 import com.boardlens.pipeline.IdentityEnhancer
@@ -17,7 +18,10 @@ import com.boardlens.pipeline.Pt
 import com.boardlens.pipeline.Quad
 import com.boardlens.pipeline.ReadingPipeline
 import com.boardlens.pipeline.Rectifier
+import com.boardlens.pipeline.SharpnessGate
 import com.boardlens.pipeline.SlideChangeDetector
+import com.boardlens.pipeline.TrackingRegionDetector
+import com.boardlens.pipeline.TrackingStatus
 import com.boardlens.tts.Speaker
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -53,6 +57,11 @@ data class ReaderUiState(
     val notice: String? = null,
     /** Selected board, normalized to the upright frame; null = whole frame. */
     val region: Quad? = null,
+    /** Where the tracker currently sees the board (normalized); follows the phone's motion. */
+    val trackedRegion: Quad? = null,
+    val tracking: TrackingStatus = TrackingStatus.Off,
+    /** Frames dropped by the blur gate since start; shown in the debug status line. */
+    val skippedFrames: Int = 0,
     val frameSize: FrameSize? = null,
     /** The image that went into OCR, for the "Image" view. */
     val processedImage: ImageBitmap? = null,
@@ -77,14 +86,17 @@ class ReaderViewModel(app: Application) : AndroidViewModel(app) {
     private val _settings = MutableStateFlow(DisplaySettings())
     val settings: StateFlow<DisplaySettings> = _settings.asStateFlow()
 
-    private val regionDetector = ManualRegionDetector()
+    private val openCvReady = OpenCVLoader.initLocal().also {
+        if (!it) Log.e(TAG, "OpenCV failed to load; perspective correction, tracking and auto-detect disabled")
+    }
+
+    /** Fixed corners; used only when OpenCV is unavailable. */
+    private val manualRegion = ManualRegionDetector()
+    /** Follows the board while the phone moves. Touched only on the analysis thread. */
+    private val tracker: TrackingRegionDetector? = if (openCvReady) TrackingRegionDetector() else null
     private val boardDetector = OpenCvBoardDetector()
     private val slideDetector = SlideChangeDetector()
     private val speaker = Speaker(app)
-
-    private val openCvReady = OpenCVLoader.initLocal().also {
-        if (!it) Log.e(TAG, "OpenCV failed to load; perspective correction and auto-detect disabled")
-    }
 
     // All pipeline and OpenCV work happens on this single thread.
     val analysisExecutor: ExecutorService = Executors.newSingleThreadExecutor()
@@ -92,7 +104,8 @@ class ReaderViewModel(app: Application) : AndroidViewModel(app) {
     private val bicubic = BicubicUpscaleEnhancer()
 
     private val pipeline = ReadingPipeline(
-        regionDetector = regionDetector,
+        gate = if (openCvReady) SharpnessGate() else AcceptAllGate,
+        regionDetector = tracker ?: manualRegion,
         rectifier = if (openCvReady) OpenCvRectifier() else Rectifier { frame, _ -> frame.bitmap },
         enhancer = if (openCvReady) bicubic else IdentityEnhancer,
         recognizer = MlKitTextRecognizer(),
@@ -128,9 +141,17 @@ class ReaderViewModel(app: Application) : AndroidViewModel(app) {
 
         runCatching { pipeline.process(frame) }
             .onSuccess { result ->
+                if (result == null) {
+                    // Motion-blurred frame: keep showing the previous reading.
+                    Log.d(PERF_TAG, "skipped=blur gate=%.1f".format(pipeline.lastGateMs))
+                    _ui.update { it.copy(frameSize = size, skippedFrames = it.skippedFrames + 1) }
+                    return@onSuccess
+                }
                 val text = result.recognition.fullText
+                val tracking = tracker?.status ?: TrackingStatus.Off
+                val lostFor = tracker?.consecutiveLost ?: 0
                 val changed = slideDetector.update(text)
-                Log.d(PERF_TAG, "enhancer=${result.enhancerId} " +
+                Log.d(PERF_TAG, "enhancer=${result.enhancerId} tracking=$tracking " +
                     result.timingsMs.entries.joinToString(" ") { (k, v) -> "$k=%.1f".format(v) })
                 _ui.update {
                     it.copy(
@@ -141,6 +162,18 @@ class ReaderViewModel(app: Application) : AndroidViewModel(app) {
                         frameSize = size,
                         processedImage = result.enhancedImage.asImageBitmap(),
                         enhancerId = result.enhancerId,
+                        trackedRegion = when {
+                            it.region == null -> null
+                            // Region just set; the tracker picks it up on its next frame.
+                            tracker != null && tracking == TrackingStatus.Off -> it.region
+                            else -> result.region.normalize(size.width, size.height)
+                        },
+                        tracking = tracking,
+                        notice = when {
+                            it.region != null && lostFor >= LOST_NOTICE_FRAMES -> LOST_NOTICE
+                            it.notice == LOST_NOTICE -> null
+                            else -> it.notice
+                        },
                         error = null,
                     )
                 }
@@ -166,7 +199,9 @@ class ReaderViewModel(app: Application) : AndroidViewModel(app) {
         selectionFrame = frame
 
         val size = FrameSize(frame.bitmap.width, frame.bitmap.height)
-        val existing = _ui.value.region?.takeIf { regionFrameSize?.isLandscape == size.isLandscape }
+        // Edit the board where the tracker sees it now, not where it was first selected.
+        val current = _ui.value.trackedRegion ?: _ui.value.region
+        val existing = current?.takeIf { regionFrameSize?.isLandscape == size.isLandscape }
         _ui.update {
             it.copy(
                 notice = null,
@@ -216,7 +251,7 @@ class ReaderViewModel(app: Application) : AndroidViewModel(app) {
             return
         }
         regionFrameSize = sel.size
-        applyRegion(sel.quad)
+        applyRegion(sel.quad, reference = selectionFrame)
         closeSelection()
     }
 
@@ -236,11 +271,25 @@ class ReaderViewModel(app: Application) : AndroidViewModel(app) {
         analyzer.paused = frozenBeforeSelection
     }
 
-    private fun applyRegion(quad: Quad?) {
+    /**
+     * [reference] is the frame the corners were drawn on; the tracker learns the board's
+     * appearance from it. Null quad = whole frame, tracking off.
+     */
+    private fun applyRegion(quad: Quad?, reference: Frame? = null) {
         if (quad == null) regionFrameSize = null
-        regionDetector.normalizedQuad = quad
-        _ui.update { it.copy(region = quad, text = "", processedImage = null) }
+        manualRegion.normalizedQuad = quad
+        _ui.update {
+            it.copy(
+                region = quad,
+                trackedRegion = quad,
+                tracking = if (quad != null && tracker != null) TrackingStatus.Anchor else TrackingStatus.Off,
+                notice = if (it.notice == LOST_NOTICE) null else it.notice,
+                text = "",
+                processedImage = null,
+            )
+        }
         analysisExecutor.execute {
+            tracker?.setReference(if (quad != null) reference else null, quad)
             pipeline.resetHistory()
             slideDetector.reset()
         }
@@ -272,7 +321,10 @@ class ReaderViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     override fun onCleared() {
-        analysisExecutor.execute { pipeline.close() }
+        analysisExecutor.execute {
+            pipeline.close()
+            tracker?.close()
+        }
         analysisExecutor.shutdown()
         speaker.close()
     }
@@ -283,5 +335,8 @@ class ReaderViewModel(app: Application) : AndroidViewModel(app) {
         const val PERF_TAG = "BoardLens/Perf"
         /** Smallest region accepted, as a fraction of the frame (normalized area). */
         private const val MIN_REGION_AREA = 0.005f
+        /** ~2 s at the 400 ms analysis interval. */
+        private const val LOST_NOTICE_FRAMES = 5
+        private const val LOST_NOTICE = "Lost the board. Point the camera back at it, or tap Adjust board.
     }
 }

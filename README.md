@@ -11,7 +11,7 @@ The research question: **how much does a learned multi-frame super-resolution st
 | Stage | Baseline (MVP) | Planned replacement |
 |---|---|---|
 | 1. Capture | CameraX, ~2.7 MP analysis frames, linear zoom | Optical tele lens selection |
-| 2. Stabilize | Passthrough | Feature-based stabilization |
+| 2. Stabilize | Blur gate (skip frames much blurrier than recent ones) + ORB/homography board tracking | Learned tracker, gyro fusion |
 | 3. Region + rectify | OpenCV quad detection proposes corners, user adjusts on a frozen frame; OpenCV homography | Learned board detector, tracking |
 | 4. Text detection | Whole region | Text-box detector (crop before SR) |
 | 5. Enhance | Bicubic upscale to 1600 px long side (toggle: none) | **Multi-frame SR (`ml/`)** |
@@ -26,6 +26,7 @@ data/   boardlens_data: synthetic slides, degradation chain, slide-frame alignme
 ml/     boardlens_ml:   CER/WER metrics, SR model, training, LiteRT/ONNX export
 docs/   design notes, data-collection protocol, experiment logs
 tests/  Python tests (pytest); Android unit tests live in app/src/test
+tools/  Algorithm prototypes and simulations (e.g. tools/tracking/simulate.py)
 ```
 
 ## Getting started

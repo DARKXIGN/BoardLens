@@ -55,6 +55,7 @@ import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.boardlens.pipeline.FitTransform
+import com.boardlens.pipeline.TrackingStatus
 
 /** Same 4:3 request for preview and analysis so both streams cover the same field of view. */
 private fun fourByThreeSelector(target: Size) = ResolutionSelector.Builder()
@@ -154,11 +155,15 @@ private fun CameraPane(vm: ReaderViewModel, ui: ReaderUiState, modifier: Modifie
     }
 }
 
-/** Draws the selected region on the live preview. Approximate: preview and analysis share a 4:3 field of view. */
+/**
+ * Draws where the tracker sees the board on the live preview (approximate: preview and
+ * analysis share a 4:3 field of view). Yellow = locked on, orange = lost, holding position.
+ */
 @Composable
 private fun RegionOverlay(ui: ReaderUiState, modifier: Modifier) {
-    val region = ui.region ?: return
+    val region = ui.trackedRegion ?: ui.region ?: return
     val frame = ui.frameSize ?: return
+    val color = if (ui.tracking == TrackingStatus.Lost) Color(0xFFFF9800) else Color(0xFFFFD400)
     BoxWithConstraints(modifier) {
         val fit = FitTransform.fitCenter(frame.width, frame.height, constraints.maxWidth.toFloat(), constraints.maxHeight.toFloat())
         Canvas(Modifier.fillMaxSize()) {
@@ -169,8 +174,8 @@ private fun RegionOverlay(ui: ReaderUiState, modifier: Modifier) {
                 close()
             }
             drawPath(path, Color.Black.copy(alpha = 0.6f), style = Stroke(width = 6.dp.toPx()))
-            drawPath(path, Color(0xFFFFD400), style = Stroke(width = 2.5.dp.toPx()))
-            pts.forEach { drawCircle(Color(0xFFFFD400), radius = 4.dp.toPx(), center = Offset(it.x, it.y)) }
+            drawPath(path, color, style = Stroke(width = 2.5.dp.toPx()))
+            pts.forEach { drawCircle(color, radius = 4.dp.toPx(), center = Offset(it.x, it.y)) }
         }
     }
 }
@@ -230,7 +235,13 @@ private fun ReadingPane(ui: ReaderUiState, settings: DisplaySettings, modifier: 
         } else {
             // Debug status refreshes every frame, so it is deliberately not a live region.
             val total = ui.timingsMs.values.sum()
-            val status = ui.error ?: if (total > 0) "%.0f ms/frame · %s".format(total, ui.enhancerId) else ""
+            val status = ui.error ?: if (total > 0) {
+                "%.0f ms/frame · %s · %s · blur-skipped %d".format(
+                    total, ui.enhancerId, ui.tracking.name.lowercase(), ui.skippedFrames,
+                )
+            } else {
+                ""
+            }
             Text(
                 status,
                 color = foreground.copy(alpha = 0.6f),
