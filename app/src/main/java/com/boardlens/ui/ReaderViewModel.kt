@@ -337,6 +337,6 @@ class ReaderViewModel(app: Application) : AndroidViewModel(app) {
         private const val MIN_REGION_AREA = 0.005f
         /** ~2 s at the 400 ms analysis interval. */
         private const val LOST_NOTICE_FRAMES = 5
-        private const val LOST_NOTICE = "Lost the board. Point the camera back at it, or tap Adjust board.
+        private const val LOST_NOTICE = "Lost the board. Point the camera back at it, or tap Adjust board."
     }
 }
