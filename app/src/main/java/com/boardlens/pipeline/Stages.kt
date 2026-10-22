@@ -16,9 +16,19 @@ class Frame(val bitmap: Bitmap, val timestampNs: Long)
 
 // Quad and Pt live in Geometry.kt (pure Kotlin, unit-tested on the JVM).
 
-data class TextLine(val text: String, val box: Rect?)
+/** One recognized line. [box] is in pixels of the image given to the recognizer. */
+data class TextLine(val text: String, val box: BBox?, val confidence: Float = 0f)
 
-data class Recognition(val lines: List<TextLine>) {
+/**
+ * OCR output. [lines] are kept lines in reading order; [rejected] were filtered out
+ * (low confidence, no letters or digits) and are kept only for the debug overlay.
+ */
+data class Recognition(
+    val lines: List<TextLine>,
+    val rejected: List<TextLine> = emptyList(),
+    val imageWidth: Int = 0,
+    val imageHeight: Int = 0,
+) {
     val fullText: String get() = lines.joinToString("\n") { it.text }
 }
 

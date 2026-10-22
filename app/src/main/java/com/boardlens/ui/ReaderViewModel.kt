@@ -2,11 +2,13 @@ package com.boardlens.ui
 
 import android.app.Application
 import android.os.Build
+import android.os.SystemClock
 import android.util.Log
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.lifecycle.AndroidViewModel
 import com.boardlens.camera.FrameAnalyzer
+import com.boardlens.camera.MotionMonitor
 import com.boardlens.eval.EvalSession
 import com.boardlens.eval.EvalStore
 import com.boardlens.eval.Evaluator
@@ -22,9 +24,11 @@ import com.boardlens.pipeline.OpenCvRectifier
 import com.boardlens.pipeline.Pt
 import com.boardlens.pipeline.Quad
 import com.boardlens.pipeline.ReadingPipeline
+import com.boardlens.pipeline.Recognition
 import com.boardlens.pipeline.Rectifier
 import com.boardlens.pipeline.SharpnessGate
 import com.boardlens.pipeline.SlideChangeDetector
+import com.boardlens.pipeline.TextStabilizer
 import com.boardlens.pipeline.TrackingRegionDetector
 import com.boardlens.pipeline.TrackingStatus
 import com.boardlens.tts.Speaker
@@ -67,6 +71,12 @@ data class ReaderUiState(
     val tracking: TrackingStatus = TrackingStatus.Off,
     /** Frames dropped by the blur gate since start; shown in the debug status line. */
     val skippedFrames: Int = 0,
+    /** True while the gyroscope says the phone is being moved; reading pauses. */
+    val moving: Boolean = false,
+    /** Frames skipped because the phone was moving. */
+    val motionSkipped: Int = 0,
+    /** Last OCR result with boxes, for the "Show image" debug overlay. */
+    val recognition: Recognition? = null,
     val frameSize: FrameSize? = null,
     /** The image that went into OCR, for the "Image" view. */
     val processedImage: ImageBitmap? = null,
@@ -120,6 +130,10 @@ class ReaderViewModel(app: Application) : AndroidViewModel(app) {
     private val tracker: TrackingRegionDetector? = if (openCvReady) TrackingRegionDetector() else null
     private val boardDetector = OpenCvBoardDetector()
     private val slideDetector = SlideChangeDetector()
+    /** Shows only lines read in more than one recent frame. Analysis thread only. */
+    private val stabilizer = TextStabilizer()
+    /** Gyroscope: frames taken while the phone is being moved are skipped. */
+    private val motion = MotionMonitor(app)
     private val speaker = Speaker(app)
 
     // All pipeline and OpenCV work happens on this single thread.
@@ -180,24 +194,42 @@ class ReaderViewModel(app: Application) : AndroidViewModel(app) {
             _ui.update { it.copy(notice = "Screen rotated. Select the board again.") }
         }
 
+        if (motion.gate.isMoving(SystemClock.elapsedRealtimeNanos())) {
+            // Phone is being turned or panned: frames are blurred and aimed elsewhere.
+            Log.d(PERF_TAG, "skipped=motion")
+            _ui.update { it.copy(frameSize = size, moving = true, motionSkipped = it.motionSkipped + 1) }
+            return
+        }
+
         runCatching { pipeline.process(frame) }
             .onSuccess { result ->
                 if (result == null) {
                     // Motion-blurred frame: keep showing the previous reading.
                     Log.d(PERF_TAG, "skipped=blur gate=%.1f".format(pipeline.lastGateMs))
-                    _ui.update { it.copy(frameSize = size, skippedFrames = it.skippedFrames + 1) }
+                    _ui.update { it.copy(frameSize = size, moving = false, skippedFrames = it.skippedFrames + 1) }
                     return@onSuccess
                 }
-                val text = result.recognition.fullText
                 val tracking = tracker?.status ?: TrackingStatus.Off
                 val lostFor = tracker?.consecutiveLost ?: 0
-                val changed = slideDetector.update(text)
+                // Only lines read in more than one recent frame are shown; while the board is lost
+                // the position is a guess, so nothing new is shown at all.
+                val confirmed = if (tracking == TrackingStatus.Lost) {
+                    null
+                } else {
+                    stabilizer.update(result.recognition.lines.map { it.text })
+                }
+                val text = confirmed?.joinToString("\n")
+                val changed = text != null && slideDetector.update(text)
                 Log.d(PERF_TAG, "enhancer=${result.enhancerId} tracking=$tracking " +
+                    "lines=${result.recognition.lines.size} rejected=${result.recognition.rejected.size} " +
+                    "shown=${confirmed?.size ?: "kept"} " +
                     result.timingsMs.entries.joinToString(" ") { (k, v) -> "$k=%.1f".format(v) })
                 _ui.update {
                     it.copy(
-                        // Keep the last good reading on screen when a frame comes back empty.
-                        text = text.ifBlank { it.text },
+                        // null = nothing confirmed this frame: keep the last good reading on screen.
+                        text = text ?: it.text,
+                        moving = false,
+                        recognition = result.recognition,
                         slideChanges = if (changed) it.slideChanges + 1 else it.slideChanges,
                         timingsMs = result.timingsMs,
                         frameSize = size,
@@ -218,7 +250,7 @@ class ReaderViewModel(app: Application) : AndroidViewModel(app) {
                         error = null,
                     )
                 }
-                if (changed && _settings.value.speakNewSlides) speaker.speak(text)
+                if (changed && text != null && _settings.value.speakNewSlides) speaker.speak(text)
                 maybeCapture(frame, result.region, tracking)
             }
             .onFailure { e ->
@@ -334,6 +366,7 @@ class ReaderViewModel(app: Application) : AndroidViewModel(app) {
             tracker?.setReference(if (quad != null) reference else null, quad)
             pipeline.resetHistory()
             slideDetector.reset()
+            stabilizer.reset()
         }
     }
 
@@ -509,7 +542,13 @@ class ReaderViewModel(app: Application) : AndroidViewModel(app) {
     private inline fun updateEval(crossinline f: (EvalUiState) -> EvalUiState) =
         _ui.update { it.copy(eval = f(it.eval)) }
 
+    /** Call while the camera screen is visible (sensor listeners cost battery). */
+    fun startSensors() = motion.start()
+
+    fun stopSensors() = motion.stop()
+
     override fun onCleared() {
+        motion.stop()
         analysisExecutor.execute {
             pipeline.close()
             tracker?.close()

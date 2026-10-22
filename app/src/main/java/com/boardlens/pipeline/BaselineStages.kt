@@ -112,17 +112,25 @@ class BicubicUpscaleEnhancer(
     }
 }
 
-/** ML Kit on-device Latin OCR (bundled model, no network). Called from the analysis thread. */
-class MlKitTextRecognizer : TextRecognizer {
+/**
+ * ML Kit on-device Latin OCR (bundled model, no network). Called from the analysis thread.
+ * ML Kit does not return blocks in reading order, so they are re-ordered by layout
+ * ([ReadingOrder]) and filtered ([LineFilter]) before anything uses the text.
+ */
+class MlKitTextRecognizer(private val filter: LineFilter = LineFilter()) : TextRecognizer {
     private val client = TextRecognition.getClient(TextRecognizerOptions.DEFAULT_OPTIONS)
 
     override fun recognize(image: Bitmap): Recognition {
         val result = Tasks.await(client.process(InputImage.fromBitmap(image, 0)))
-        val lines = result.textBlocks.flatMap { block ->
-            block.lines.map { TextLine(it.text, it.boundingBox) }
+        val blocks = result.textBlocks.mapNotNull { block ->
+            val lines = block.lines.map { TextLine(it.text, it.boundingBox?.toBBox(), it.confidence) }
+            val box = block.boundingBox?.toBBox() ?: lines.mapNotNull { it.box }.takeIf { it.isNotEmpty() }?.let { BBox.unionOf(it) }
+            box?.let { OcrBlock(it, lines) }
         }
-        return Recognition(lines)
+        return assembleRecognition(blocks, filter, image.width, image.height)
     }
+
+    private fun Rect.toBBox() = BBox(left.toFloat(), top.toFloat(), right.toFloat(), bottom.toFloat())
 
     override fun close() = client.close()
 }

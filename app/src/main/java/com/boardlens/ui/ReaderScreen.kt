@@ -51,6 +51,8 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
@@ -129,7 +131,20 @@ private fun CameraPane(vm: ReaderViewModel, ui: ReaderUiState, modifier: Modifie
 
     DisposableEffect(lifecycleOwner) {
         controller.bindToLifecycle(lifecycleOwner)
-        onDispose { controller.unbind() }
+        // Gyroscope only while the screen is in front (adding the observer replays ON_RESUME).
+        val observer = LifecycleEventObserver { _, event ->
+            when (event) {
+                Lifecycle.Event.ON_RESUME -> vm.startSensors()
+                Lifecycle.Event.ON_PAUSE -> vm.stopSensors()
+                else -> Unit
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose {
+            lifecycleOwner.lifecycle.removeObserver(observer)
+            vm.stopSensors()
+            controller.unbind()
+        }
     }
 
     Column(modifier) {
@@ -205,12 +220,15 @@ private fun ReadingPane(ui: ReaderUiState, settings: DisplaySettings, modifier: 
         val image = ui.processedImage
         if (settings.showImage && image != null) {
             // What OCR actually sees: rectified (and upscaled) board. Useful for debugging and demos.
-            Image(
-                bitmap = image,
-                contentDescription = ui.text.ifBlank { "Corrected view of the board" },
-                contentScale = ContentScale.Fit,
-                modifier = Modifier.fillMaxSize(),
-            )
+            Box(Modifier.fillMaxSize()) {
+                Image(
+                    bitmap = image,
+                    contentDescription = ui.text.ifBlank { "Corrected view of the board" },
+                    contentScale = ContentScale.Fit,
+                    modifier = Modifier.fillMaxSize(),
+                )
+                ui.recognition?.let { OcrDebugOverlay(it, Modifier.fillMaxSize()) }
+            }
         } else {
             Column(Modifier.verticalScroll(rememberScrollState())) {
                 if (ui.slideChanges > 0) {
@@ -234,6 +252,18 @@ private fun ReadingPane(ui: ReaderUiState, settings: DisplaySettings, modifier: 
             }
         }
 
+        if (ui.moving) {
+            // Toggles often while handheld, so not a live region; the text above stays put meanwhile.
+            Text(
+                "Hold still to read",
+                color = foreground,
+                fontSize = 14.sp,
+                modifier = Modifier
+                    .align(Alignment.TopEnd)
+                    .background(background.copy(alpha = 0.85f)),
+            )
+        }
+
         val notice = ui.notice
         if (notice != null) {
             // Announced once by TalkBack; changes only on user-relevant events.
@@ -250,8 +280,8 @@ private fun ReadingPane(ui: ReaderUiState, settings: DisplaySettings, modifier: 
             // Debug status refreshes every frame, so it is deliberately not a live region.
             val total = ui.timingsMs.values.sum()
             val status = ui.error ?: if (total > 0) {
-                "%.0f ms/frame · %s · %s · blur-skipped %d".format(
-                    total, ui.enhancerId, ui.tracking.name.lowercase(), ui.skippedFrames,
+                "%.0f ms/frame · %s · %s · blur-skipped %d · motion-skipped %d".format(
+                    total, ui.enhancerId, ui.tracking.name.lowercase(), ui.skippedFrames, ui.motionSkipped,
                 )
             } else {
                 ""
