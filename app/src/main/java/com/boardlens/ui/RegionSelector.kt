@@ -6,9 +6,13 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.material3.Button
 import androidx.compose.material3.OutlinedButton
@@ -60,30 +64,56 @@ fun RegionSelectorScreen(
     onConfirm: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
+    @Composable
+    fun Status(modifier: Modifier) = Text(
+        text = statusText(selection),
+        color = if (selection.invalid) Color(0xFFFF8A80) else Color.White,
+        fontSize = 18.sp,
+        modifier = modifier
+            .padding(12.dp)
+            .semantics { liveRegion = LiveRegionMode.Polite },
+    )
+
     // Surface blocks touches from reaching the live screen underneath.
     Surface(modifier.fillMaxSize(), color = Color.Black) {
-        Column(Modifier.fillMaxSize()) {
-            Text(
-                text = statusText(selection),
-                color = if (selection.invalid) Color(0xFFFF8A80) else Color.White,
-                fontSize = 18.sp,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(12.dp)
-                    .semantics { liveRegion = LiveRegionMode.Polite },
-            )
-
-            CornerEditor(selection, onMoveCorner, Modifier.weight(1f).fillMaxWidth())
-
-            Column(Modifier.padding(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    OutlinedButton(onClick = onAutoDetect, modifier = Modifier.weight(1f)) { Text("Auto-detect") }
-                    OutlinedButton(onClick = onResetCorners, modifier = Modifier.weight(1f)) { Text("Reset") }
-                    OutlinedButton(onClick = onWholeFrame, modifier = Modifier.weight(1f)) { Text("Whole view") }
+        BoxWithConstraints(Modifier.fillMaxSize()) {
+            if (maxWidth > maxHeight) {
+                // Landscape: the frozen frame keeps the full height; controls in a side column.
+                Row(Modifier.fillMaxSize()) {
+                    CornerEditor(selection, onMoveCorner, Modifier.weight(1f).fillMaxHeight())
+                    Column(
+                        Modifier
+                            .width(240.dp)
+                            .fillMaxHeight()
+                            .verticalScroll(rememberScrollState())
+                            .padding(8.dp),
+                        verticalArrangement = Arrangement.spacedBy(8.dp),
+                    ) {
+                        Status(Modifier.fillMaxWidth())
+                        Button(onClick = onConfirm, modifier = Modifier.fillMaxWidth()) { Text("Use this area") }
+                        OutlinedButton(onClick = onAutoDetect, modifier = Modifier.fillMaxWidth()) { Text("Auto-detect") }
+                        OutlinedButton(onClick = onResetCorners, modifier = Modifier.fillMaxWidth()) { Text("Reset") }
+                        OutlinedButton(onClick = onWholeFrame, modifier = Modifier.fillMaxWidth()) { Text("Whole view") }
+                        OutlinedButton(onClick = onCancel, modifier = Modifier.fillMaxWidth()) { Text("Cancel") }
+                    }
                 }
-                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    OutlinedButton(onClick = onCancel, modifier = Modifier.weight(1f)) { Text("Cancel") }
-                    Button(onClick = onConfirm, modifier = Modifier.weight(2f)) { Text("Use this area") }
+            } else {
+                Column(Modifier.fillMaxSize()) {
+                    Status(Modifier.fillMaxWidth())
+
+                    CornerEditor(selection, onMoveCorner, Modifier.weight(1f).fillMaxWidth())
+
+                    Column(Modifier.padding(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            OutlinedButton(onClick = onAutoDetect, modifier = Modifier.weight(1f)) { Text("Auto-detect") }
+                            OutlinedButton(onClick = onResetCorners, modifier = Modifier.weight(1f)) { Text("Reset") }
+                            OutlinedButton(onClick = onWholeFrame, modifier = Modifier.weight(1f)) { Text("Whole view") }
+                        }
+                        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            OutlinedButton(onClick = onCancel, modifier = Modifier.weight(1f)) { Text("Cancel") }
+                            Button(onClick = onConfirm, modifier = Modifier.weight(2f)) { Text("Use this area") }
+                        }
+                    }
                 }
             }
         }

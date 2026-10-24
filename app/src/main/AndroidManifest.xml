@@ -12,10 +12,18 @@
         android:supportsRtl="true"
         android:theme="@style/Theme.BoardLens">
 
+        <!--
+            fullSensor: the camera's analysis frames follow how the phone is physically held
+            (CameraX uses the orientation sensor), so the screen follows it too, even with
+            auto-rotate locked; otherwise the overlay and the frames disagree in landscape.
+            configChanges: rotating moves views instead of recreating the activity, so the
+            camera keeps running and keeps its zoom.
+        -->
         <activity
             android:name=".MainActivity"
             android:exported="true"
-            android:screenOrientation="unspecified">
+            android:screenOrientation="fullSensor"
+            android:configChanges="orientation|screenSize|screenLayout|smallestScreenSize|keyboardHidden">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />

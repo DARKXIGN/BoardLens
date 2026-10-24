@@ -160,7 +160,7 @@ class ReaderViewModel(app: Application) : AndroidViewModel(app) {
     @Volatile
     private var selectionFrame: Frame? = null
 
-    /** Orientation the region was drawn in; a rotated frame invalidates it. */
+    /** Size (orientation) of the frames the current region refers to. */
     @Volatile
     private var regionFrameSize: FrameSize? = null
 
@@ -174,8 +174,10 @@ class ReaderViewModel(app: Application) : AndroidViewModel(app) {
     private var captureSession: EvalSession? = null
     private var captureTarget = 0
 
+    /** Last zoom set by the user (0..1); restored if the camera is recreated. */
     @Volatile
-    private var zoomLinear = 0f
+    var zoomLinear = 0f
+        private set
 
     init {
         analysisExecutor.execute { refreshEvalSessions() }
@@ -189,9 +191,16 @@ class ReaderViewModel(app: Application) : AndroidViewModel(app) {
 
         val drawnIn = regionFrameSize
         if (drawnIn != null && drawnIn.isLandscape != size.isLandscape) {
-            // Device rotated: the stored corners no longer point at the board.
-            applyRegion(null)
-            _ui.update { it.copy(notice = "Screen rotated. Select the board again.") }
+            if (tracker != null) {
+                // Device rotated. Frames are upright in both orientations, so the board looks the
+                // same and only its position in the (now wider or taller) frame changes. The
+                // tracker re-finds it by its features (ORB + homography), so the region is kept.
+                regionFrameSize = size
+            } else {
+                // Fixed corners (no OpenCV) cannot follow the new framing.
+                applyRegion(null)
+                _ui.update { it.copy(notice = "Screen rotated. Select the board again.") }
+            }
         }
 
         if (motion.gate.isMoving(SystemClock.elapsedRealtimeNanos())) {
@@ -381,9 +390,19 @@ class ReaderViewModel(app: Application) : AndroidViewModel(app) {
         _ui.update { it.copy(frozen = frozen) }
     }
 
+    /** True while text is being read aloud. */
+    val speaking: StateFlow<Boolean> get() = speaker.speaking
+
     fun speak() = speaker.speak(_ui.value.text)
 
     fun stopSpeaking() = speaker.stop()
+
+    /** The read-aloud button: starts reading, or stops it if already reading. */
+    fun toggleSpeaking() {
+        if (speaker.speaking.value) speaker.stop() else speak()
+    }
+
+    fun closeEvalPanel() = updateEval { it.copy(panelOpen = false, message = null) }
 
     fun updateSettings(transform: (DisplaySettings) -> DisplaySettings) {
         val before = _settings.value
