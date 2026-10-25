@@ -1,0 +1,5 @@
+# Tossface SVGs must stay byte-identical to the originals: never convert line endings.
+app/src/main/assets/tossface/*.svg -text
+# Fonts are binary.
+*.otf binary
+*.ttf binary

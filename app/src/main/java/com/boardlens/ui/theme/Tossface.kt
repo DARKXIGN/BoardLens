@@ -52,6 +52,7 @@ enum class TossIcon(val file: String) {
     Loudspeaker("u1F4E2"),    // 📢 read new slides aloud
     Page("u1F4C4"),           // 📄 licenses
     Hand("u270B"),            // ✋ hold still
+    Clipboard("u1F4CB"),      // 📋 copy text
 }
 
 private object TossfaceCache {

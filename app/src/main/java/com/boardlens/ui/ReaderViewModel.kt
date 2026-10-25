@@ -111,14 +111,28 @@ data class DisplaySettings(
     val showImage: Boolean = false,
     val upscale: Boolean = true,
     val speakNewSlides: Boolean = false,
-)
+) {
+    companion object {
+        const val FONT_MIN = 16
+        const val FONT_MAX = 96
+        const val FONT_STEP = 4
+
+        /** Keeps a board-text size inside the allowed range, on the A−/A+ step. */
+        fun clampFontSize(sp: Int): Int {
+            val snapped = Math.round(sp.toFloat() / FONT_STEP) * FONT_STEP
+            return snapped.coerceIn(FONT_MIN, FONT_MAX)
+        }
+    }
+}
 
 class ReaderViewModel(app: Application) : AndroidViewModel(app) {
 
     private val _ui = MutableStateFlow(ReaderUiState())
     val ui: StateFlow<ReaderUiState> = _ui.asStateFlow()
 
-    private val _settings = MutableStateFlow(DisplaySettings())
+    /** Settings survive restarts; read synchronously so the first frame already has them. */
+    private val settingsStore = SettingsStore(app)
+    private val _settings = MutableStateFlow(settingsStore.load())
     val settings: StateFlow<DisplaySettings> = _settings.asStateFlow()
 
     private val openCvReady = OpenCVLoader.initLocal().also {
@@ -148,7 +162,7 @@ class ReaderViewModel(app: Application) : AndroidViewModel(app) {
         gate = sharpnessGate ?: AcceptAllGate,
         regionDetector = tracker ?: manualRegion,
         rectifier = if (openCvReady) OpenCvRectifier() else Rectifier { frame, _ -> frame.bitmap },
-        enhancer = if (openCvReady) bicubic else IdentityEnhancer,
+        enhancer = if (openCvReady && _settings.value.upscale) bicubic else IdentityEnhancer,
         recognizer = MlKitTextRecognizer(),
     )
 
@@ -403,12 +417,18 @@ class ReaderViewModel(app: Application) : AndroidViewModel(app) {
         if (speaker.speaking.value) speaker.stop() else speak()
     }
 
+    /** Same, for a given text (the full-text view reads its snapshot, not the live text). */
+    fun toggleSpeakingText(text: String) {
+        if (speaker.speaking.value) speaker.stop() else speaker.speak(text)
+    }
+
     fun closeEvalPanel() = updateEval { it.copy(panelOpen = false, message = null) }
 
     fun updateSettings(transform: (DisplaySettings) -> DisplaySettings) {
         val before = _settings.value
         _settings.update(transform)
         val after = _settings.value
+        if (before != after) settingsStore.save(after)
         if (before.upscale != after.upscale && openCvReady) {
             val next = if (after.upscale) bicubic else IdentityEnhancer
             analysisExecutor.execute { pipeline.enhancer = next }

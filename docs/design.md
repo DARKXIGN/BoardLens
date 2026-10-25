@@ -47,6 +47,8 @@ Contracts live in `app/src/main/java/com/boardlens/pipeline/Stages.kt`; baseline
 - Default display is dark text on white cards at 36 sp. "High contrast" switches the whole app to yellow on black; size and inversion are separate settings. All text/background pairs are at least 4.5:1.
 - Type follows the phone's font-size setting (sp): screen title 22, sheet title 20, card title 17, body 16, caption 13. Board text is 16–96 sp, user-controlled.
 - Controls carry content descriptions; the main controls are 84 dp bento tiles and every target is at least 48 dp, for low-precision tapping.
+- Display settings (text size, high contrast, invert, sharpen, read new slides aloud) persist in SharedPreferences, read synchronously at start so the first frame already uses them. "Show image" is a debug view and resets.
+- Full text: tapping the reading card opens the board text on a full screen. It shows a snapshot taken when opened (the text holds still while live reading continues; "Refresh" takes a new one, offered when newer text exists), selectable and copyable, with its own size and read-aloud controls.
 - Every view change can be undone with a visible control and with system Back (one step at a time: expanded camera, evaluation panel, image view, options). "Read aloud" becomes a red "Stop" while speech plays, and speech stops when the app goes to the background.
 
 ## Visual design
@@ -55,6 +57,7 @@ Contracts live in `app/src/main/java/com/boardlens/pipeline/Stages.kt`; baseline
 - One typeface, Pretendard (SIL OFL 1.1, four static weights bundled unmodified, about 6 MB, Korean included for later localization). One icon set, Tossface. Material icons and chips are not used.
 - Tossface's license forbids modified versions, including format changes, so the original SVG files are copied byte-for-byte into `assets/tossface` and drawn at runtime with AndroidSVG rather than converted to vector drawables. The Licenses screen carries the required credit to Toss Team and both license texts.
 - The camera card uses a TextureView preview (`ImplementationMode.COMPATIBLE`) so it can be clipped to rounded corners.
+- Tossface integrity: `tools/tossface/manifest.txt` pins each icon's SHA-256 (Toss repo commit 37720aa); `tools/tossface/fetch_tossface.ps1` downloads the originals from GitHub and checks them, and `TossfaceAssetsTest` fails the build if a bundled SVG differs by one byte or the code uses an unpinned icon. `.gitattributes` keeps Git from touching them. (Found the hard way: a file-transfer step had injected C2PA provenance metadata into every SVG.)
 
 ## Evaluation protocol
 

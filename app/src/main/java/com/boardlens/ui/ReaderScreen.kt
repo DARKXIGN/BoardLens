@@ -40,6 +40,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
@@ -56,6 +57,7 @@ import androidx.compose.ui.layout.Layout
 import androidx.compose.ui.layout.layoutId
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.semantics.LiveRegionMode
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.heading
@@ -93,9 +95,9 @@ private fun fourByThreeSelector(target: Size) = ResolutionSelector.Builder()
     .setResolutionStrategy(ResolutionStrategy(target, ResolutionStrategy.FALLBACK_RULE_CLOSEST_HIGHER_THEN_LOWER))
     .build()
 
-private const val TEXT_SIZE_MIN = 16
-private const val TEXT_SIZE_MAX = 96
-private const val TEXT_SIZE_STEP = 4
+private const val TEXT_SIZE_MIN = DisplaySettings.FONT_MIN
+private const val TEXT_SIZE_MAX = DisplaySettings.FONT_MAX
+private const val TEXT_SIZE_STEP = DisplaySettings.FONT_STEP
 
 @Composable
 fun ReaderScreen(vm: ReaderViewModel = viewModel()) {
@@ -106,14 +108,23 @@ fun ReaderScreen(vm: ReaderViewModel = viewModel()) {
     var showOptions by rememberSaveable { mutableStateOf(false) }
     var showLicenses by rememberSaveable { mutableStateOf(false) }
     var cameraExpanded by rememberSaveable { mutableStateOf(false) }
+    // Full-text view: a snapshot of the board text taken when it was opened (null = closed),
+    // so the text does not change under the reader while live reading goes on behind it.
+    var fullText by rememberSaveable { mutableStateOf<String?>(null) }
+    var fullTextAt by rememberSaveable { mutableLongStateOf(0L) }
+    fun openFullText() {
+        fullText = ui.text
+        fullTextAt = System.currentTimeMillis()
+    }
 
     // System Back undoes the most recent view change, one step at a time, before leaving the app:
     // whatever sits on top closes first. (The board picker registers its own handler below,
     // which takes precedence while it is open.)
-    BackHandler(enabled = showLicenses || showOptions || cameraExpanded || ui.eval.panelOpen || settings.showImage) {
+    BackHandler(enabled = showLicenses || showOptions || fullText != null || cameraExpanded || ui.eval.panelOpen || settings.showImage) {
         when {
             showLicenses -> showLicenses = false
             showOptions -> showOptions = false
+            fullText != null -> fullText = null
             cameraExpanded -> cameraExpanded = false
             ui.eval.panelOpen -> vm.closeEvalPanel()
             settings.showImage -> vm.updateSettings { it.copy(showImage = false) }
@@ -121,7 +132,7 @@ fun ReaderScreen(vm: ReaderViewModel = viewModel()) {
     }
     // Created here, above the layout switch, so rotating or expanding never restarts the camera.
     val controller = rememberCameraController(vm)
-    val overlayOpen = selection != null || showOptions || showLicenses
+    val overlayOpen = selection != null || showOptions || showLicenses || fullText != null
 
     Box(Modifier.fillMaxSize().background(blColors.background)) {
         // The live screen stays composed under the picker and sheets so the camera keeps running.
@@ -179,6 +190,7 @@ fun ReaderScreen(vm: ReaderViewModel = viewModel()) {
                                 ui = ui,
                                 settings = settings,
                                 onHideImage = { vm.updateSettings { it.copy(showImage = false) } },
+                                onOpenFullText = ::openFullText,
                                 modifier = Modifier.fillMaxSize(),
                             )
                         }
@@ -195,6 +207,22 @@ fun ReaderScreen(vm: ReaderViewModel = viewModel()) {
                     },
                 )
             }
+        }
+
+        val snapshot = fullText
+        if (snapshot != null) {
+            FullTextScreen(
+                text = snapshot,
+                capturedAtMillis = fullTextAt,
+                frozen = ui.frozen,
+                newerText = !ui.frozen && ui.text.isNotBlank() && ui.text != snapshot,
+                fontSizeSp = settings.fontSizeSp,
+                onFontSizeChange = { next -> vm.updateSettings { it.copy(fontSizeSp = next) } },
+                speaking = speaking,
+                onToggleSpeaking = { vm.toggleSpeakingText(snapshot) },
+                onRefresh = ::openFullText,
+                onClose = { fullText = null },
+            )
         }
 
         if (showOptions) {
@@ -544,6 +572,8 @@ private fun ReadingPane(
     ui: ReaderUiState,
     settings: DisplaySettings,
     onHideImage: () -> Unit,
+    /** Opens the full-text view; offered only when there is text to show. */
+    onOpenFullText: () -> Unit,
     modifier: Modifier,
 ) {
     val c = blColors
@@ -553,8 +583,21 @@ private fun ReadingPane(
         c.card to c.reading
     }
     val muted = foreground.copy(alpha = 0.72f)
+    val canOpen = !(settings.showImage && ui.processedImage != null) && ui.text.isNotBlank()
 
-    BlCard(modifier, color = background, padding = PaddingValues(horizontal = 20.dp, vertical = 16.dp)) {
+    BlCard(
+        modifier
+            .clip(CardShape)
+            .then(
+                if (canOpen) {
+                    Modifier.clickable(onClickLabel = "Open the full text", role = Role.Button, onClick = onOpenFullText)
+                } else {
+                    Modifier
+                },
+            ),
+        color = background,
+        padding = PaddingValues(horizontal = 20.dp, vertical = 16.dp),
+    ) {
         val image = ui.processedImage
         if (settings.showImage && image != null) {
             // What OCR actually sees: rectified (and upscaled) board. Useful for debugging and demos.
@@ -580,7 +623,13 @@ private fun ReadingPane(
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(8.dp),
                 ) {
-                    Text("Board text", style = BoardLensType.label, color = muted, modifier = Modifier.weight(1f))
+                    Text(
+                        if (canOpen) "Board text · Tap for full text" else "Board text",
+                        style = BoardLensType.label,
+                        color = muted,
+                        maxLines = 1,
+                        modifier = Modifier.weight(1f),
+                    )
                     if (ui.moving) {
                         // Toggles often while handheld, so not a live region; the text below stays put.
                         Pill("Hold still to read", c.warnBg, c.warnFg, icon = TossIcon.Hand)
