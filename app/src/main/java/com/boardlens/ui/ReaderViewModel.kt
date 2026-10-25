@@ -105,7 +105,8 @@ data class EvalUiState(
 
 data class DisplaySettings(
     val fontSizeSp: Int = 36,
-    val highContrast: Boolean = true,
+    /** Switches the whole app to the yellow-on-black palette. Off: light Toss-style palette. */
+    val highContrast: Boolean = false,
     val inverted: Boolean = false,
     val showImage: Boolean = false,
     val upscale: Boolean = true,

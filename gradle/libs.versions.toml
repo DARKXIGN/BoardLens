@@ -11,6 +11,7 @@ mlkitTextRecognition = "16.0.1"
 opencv = "4.12.0"
 litert = "2.3.0"
 junit = "4.13.2"
+androidsvg = "1.4"
 
 [libraries]
 androidx-core-ktx = { group = "androidx.core", name = "core-ktx", version.ref = "coreKtx" }
@@ -36,6 +37,9 @@ opencv = { group = "org.opencv", name = "opencv", version.ref = "opencv" }
 # Weeks 7-10: custom super-resolution model. Not wired in yet.
 litert = { group = "com.google.ai.edge.litert", name = "litert", version.ref = "litert" }
 litert-gpu = { group = "com.google.ai.edge.litert", name = "litert-gpu", version.ref = "litert" }
+
+# Draws the bundled, unmodified Tossface SVG files (Tossface license forbids converting them).
+androidsvg = { group = "com.caverock", name = "androidsvg-aar", version.ref = "androidsvg" }
 
 junit = { group = "junit", name = "junit", version.ref = "junit" }
 

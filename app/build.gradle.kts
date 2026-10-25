@@ -60,6 +60,9 @@ dependencies {
     implementation(libs.mlkit.text.recognition)
     implementation(libs.opencv)
 
+    // Icons: original Tossface SVGs from assets/tossface, rendered as-is.
+    implementation(libs.androidsvg)
+
     // Uncomment when the super-resolution model lands (weeks 7-10).
     // implementation(libs.litert)
     // implementation(libs.litert.gpu)

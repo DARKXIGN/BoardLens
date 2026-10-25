@@ -2,20 +2,24 @@ package com.boardlens.ui
 
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.Image
+import androidx.compose.foundation.background
+import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.foundation.gestures.detectDragGestures
-import androidx.compose.material3.Button
-import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -25,7 +29,9 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
@@ -35,14 +41,21 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.semantics.LiveRegionMode
 import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.heading
 import androidx.compose.ui.semantics.liveRegion
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
 import com.boardlens.pipeline.FitTransform
 import com.boardlens.pipeline.Pt
+import com.boardlens.ui.theme.BoardLensType
+import com.boardlens.ui.theme.CameraCardColor
+import com.boardlens.ui.theme.CameraOverlay
+import com.boardlens.ui.theme.OutlineLocked
+import com.boardlens.ui.theme.TossIcon
+import com.boardlens.ui.theme.TossIconImage
+import com.boardlens.ui.theme.blColors
 
-private val HandleColor = Color(0xFFFFD400)
+private val HandleColor = OutlineLocked
 private val CornerNames = listOf("top left", "top right", "bottom right", "bottom left")
 
 /**
@@ -64,68 +77,125 @@ fun RegionSelectorScreen(
     onConfirm: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
+    val c = blColors
+
     @Composable
-    fun Status(modifier: Modifier) = Text(
-        text = statusText(selection),
-        color = if (selection.invalid) Color(0xFFFF8A80) else Color.White,
-        fontSize = 18.sp,
-        modifier = modifier
-            .padding(12.dp)
-            .semantics { liveRegion = LiveRegionMode.Polite },
-    )
+    fun TopBar() = Row(
+        Modifier.fillMaxWidth(),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(10.dp),
+    ) {
+        IconSquareButton(TossIcon.Back, "Cancel and go back", onCancel)
+        Text(
+            "Select the board",
+            style = BoardLensType.heading,
+            color = c.textPrimary,
+            modifier = Modifier.semantics { heading() },
+        )
+    }
+
+    @Composable
+    fun Frame(modifier: Modifier) = Box(
+        modifier
+            .clip(RoundedCornerShape(24.dp))
+            .background(CameraCardColor),
+    ) {
+        CornerEditor(selection, onMoveCorner, Modifier.fillMaxSize())
+        Pill(
+            "Frame paused",
+            CameraOverlay,
+            Color.White,
+            icon = TossIcon.Pause,
+            modifier = Modifier
+                .align(Alignment.BottomStart)
+                .padding(12.dp),
+        )
+    }
+
+    @Composable
+    fun Actions(modifier: Modifier, stackedButtons: Boolean) = BlCard(modifier) {
+        Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            StatusRow(selection)
+            PrimaryButton("Use this area", onConfirm, Modifier.fillMaxWidth())
+            if (stackedButtons) {
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    SecondaryButton("Auto-detect", onAutoDetect, Modifier.weight(1f), icon = TossIcon.Target, stacked = true)
+                    SecondaryButton("Reset", onResetCorners, Modifier.weight(1f), icon = TossIcon.Return, stacked = true)
+                    SecondaryButton("Whole view", onWholeFrame, Modifier.weight(1f), icon = TossIcon.Screen, stacked = true)
+                }
+            } else {
+                SecondaryButton("Auto-detect", onAutoDetect, Modifier.fillMaxWidth(), icon = TossIcon.Target)
+                SecondaryButton("Reset", onResetCorners, Modifier.fillMaxWidth(), icon = TossIcon.Return)
+                SecondaryButton("Whole view", onWholeFrame, Modifier.fillMaxWidth(), icon = TossIcon.Screen)
+            }
+        }
+    }
 
     // Surface blocks touches from reaching the live screen underneath.
-    Surface(modifier.fillMaxSize(), color = Color.Black) {
+    Surface(modifier.fillMaxSize(), color = c.background) {
         BoxWithConstraints(Modifier.fillMaxSize()) {
             if (maxWidth > maxHeight) {
                 // Landscape: the frozen frame keeps the full height; controls in a side column.
-                Row(Modifier.fillMaxSize()) {
-                    CornerEditor(selection, onMoveCorner, Modifier.weight(1f).fillMaxHeight())
+                Row(
+                    Modifier
+                        .fillMaxSize()
+                        .padding(12.dp),
+                    horizontalArrangement = Arrangement.spacedBy(10.dp),
+                ) {
+                    Frame(Modifier.weight(1f).fillMaxHeight())
                     Column(
                         Modifier
-                            .width(240.dp)
+                            .width(300.dp)
                             .fillMaxHeight()
-                            .verticalScroll(rememberScrollState())
-                            .padding(8.dp),
-                        verticalArrangement = Arrangement.spacedBy(8.dp),
+                            .verticalScroll(rememberScrollState()),
+                        verticalArrangement = Arrangement.spacedBy(10.dp),
                     ) {
-                        Status(Modifier.fillMaxWidth())
-                        Button(onClick = onConfirm, modifier = Modifier.fillMaxWidth()) { Text("Use this area") }
-                        OutlinedButton(onClick = onAutoDetect, modifier = Modifier.fillMaxWidth()) { Text("Auto-detect") }
-                        OutlinedButton(onClick = onResetCorners, modifier = Modifier.fillMaxWidth()) { Text("Reset") }
-                        OutlinedButton(onClick = onWholeFrame, modifier = Modifier.fillMaxWidth()) { Text("Whole view") }
-                        OutlinedButton(onClick = onCancel, modifier = Modifier.fillMaxWidth()) { Text("Cancel") }
+                        TopBar()
+                        Actions(Modifier.fillMaxWidth(), stackedButtons = false)
                     }
                 }
             } else {
-                Column(Modifier.fillMaxSize()) {
-                    Status(Modifier.fillMaxWidth())
-
-                    CornerEditor(selection, onMoveCorner, Modifier.weight(1f).fillMaxWidth())
-
-                    Column(Modifier.padding(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                            OutlinedButton(onClick = onAutoDetect, modifier = Modifier.weight(1f)) { Text("Auto-detect") }
-                            OutlinedButton(onClick = onResetCorners, modifier = Modifier.weight(1f)) { Text("Reset") }
-                            OutlinedButton(onClick = onWholeFrame, modifier = Modifier.weight(1f)) { Text("Whole view") }
-                        }
-                        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                            OutlinedButton(onClick = onCancel, modifier = Modifier.weight(1f)) { Text("Cancel") }
-                            Button(onClick = onConfirm, modifier = Modifier.weight(2f)) { Text("Use this area") }
-                        }
-                    }
+                Column(
+                    Modifier
+                        .fillMaxSize()
+                        .padding(horizontal = 16.dp, vertical = 12.dp),
+                    verticalArrangement = Arrangement.spacedBy(10.dp),
+                ) {
+                    TopBar()
+                    Frame(Modifier.weight(1f).fillMaxWidth())
+                    Actions(Modifier.fillMaxWidth(), stackedButtons = true)
                 }
             }
         }
     }
 }
 
-private fun statusText(selection: RegionSelection): String = when {
-    selection.invalid -> "Corners cross or the area is too small. Adjust them and try again."
-    selection.autoDetect == AutoDetectStatus.Running -> "Looking for the board…"
-    selection.autoDetect == AutoDetectStatus.Found -> "Board found. Drag the corners to adjust, then tap Use this area."
-    selection.autoDetect == AutoDetectStatus.NotFound -> "Couldn't find the board. Drag the four corners onto it."
-    else -> "Drag the four corners onto the board."
+/** What the picker found, as an icon, a title and one line of help. Announced on change. */
+@Composable
+private fun StatusRow(selection: RegionSelection) {
+    val c = blColors
+    val (icon, title, hint) = when {
+        selection.invalid -> Triple(TossIcon.Warning, "Check the corners", "They cross, or the area is too small.")
+        selection.autoDetect == AutoDetectStatus.Running -> Triple(TossIcon.Target, "Looking for the board…", "This takes a moment.")
+        selection.autoDetect == AutoDetectStatus.Found -> Triple(TossIcon.Check, "Board found", "Check the yellow outline, then tap Use this area.")
+        selection.autoDetect == AutoDetectStatus.NotFound -> Triple(TossIcon.Warning, "Couldn't find the board", "Drag the four corners onto it.")
+        else -> Triple(TossIcon.Ruler, "Drag the corners onto the board", "Or tap Auto-detect.")
+    }
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .heightIn(min = 44.dp)
+            .semantics(mergeDescendants = true) { liveRegion = LiveRegionMode.Polite },
+        horizontalArrangement = Arrangement.spacedBy(12.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        TossIconImage(icon, size = 32.dp)
+        Column {
+            Text(title, style = BoardLensType.cardTitle, color = if (selection.invalid) c.danger else c.textPrimary)
+            Spacer(Modifier.height(2.dp))
+            Text(hint, style = BoardLensType.caption, color = c.textSecondary)
+        }
+    }
 }
 
 @Composable

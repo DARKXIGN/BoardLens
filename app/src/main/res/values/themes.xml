@@ -1,5 +1,5 @@
 <resources>
     <style name="Theme.BoardLens" parent="android:Theme.Material.NoActionBar">
-        <item name="android:windowBackground">@android:color/black</item>
+        <item name="android:windowBackground">#FFF2F4F6</item>
     </style>
 </resources>

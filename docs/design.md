@@ -44,9 +44,17 @@ Contracts live in `app/src/main/java/com/boardlens/pipeline/Stages.kt`; baseline
 ## Accessibility decisions
 
 - The reading pane is not a live region; refreshing OCR text every 400 ms would make TalkBack unusable. Only the short "New slide" line is a polite live region, and reading the content is explicit ("Read aloud") or opt-in on slide change (`speakNewSlides`).
-- Default display is yellow on black at 36 sp; size, contrast and inversion are user settings.
-- Controls carry content descriptions; buttons are full-width-ish for low-precision tapping.
+- Default display is dark text on white cards at 36 sp. "High contrast" switches the whole app to yellow on black; size and inversion are separate settings. All text/background pairs are at least 4.5:1.
+- Type follows the phone's font-size setting (sp): screen title 22, sheet title 20, card title 17, body 16, caption 13. Board text is 16–96 sp, user-controlled.
+- Controls carry content descriptions; the main controls are 84 dp bento tiles and every target is at least 48 dp, for low-precision tapping.
 - Every view change can be undone with a visible control and with system Back (one step at a time: expanded camera, evaluation panel, image view, options). "Read aloud" becomes a red "Stop" while speech plays, and speech stops when the app goes to the background.
+
+## Visual design
+
+- Toss-style layout: grey ground, white rounded cards, one blue accent; a bento grid of four tiles (Read aloud, Freeze, Select/Adjust board, Text size), 2×2 on phones and one row of four when the portrait width is 600 dp or more (unfolded foldables). Rarer settings live in a bottom sheet behind the gear button.
+- One typeface, Pretendard (SIL OFL 1.1, four static weights bundled unmodified, about 6 MB, Korean included for later localization). One icon set, Tossface. Material icons and chips are not used.
+- Tossface's license forbids modified versions, including format changes, so the original SVG files are copied byte-for-byte into `assets/tossface` and drawn at runtime with AndroidSVG rather than converted to vector drawables. The Licenses screen carries the required credit to Toss Team and both license texts.
+- The camera card uses a TextureView preview (`ImplementationMode.COMPATIBLE`) so it can be clipped to rounded corners.
 
 ## Evaluation protocol
 

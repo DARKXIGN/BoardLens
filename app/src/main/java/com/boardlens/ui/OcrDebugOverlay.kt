@@ -20,6 +20,7 @@ import com.boardlens.pipeline.BBox
 import com.boardlens.pipeline.FitTransform
 import com.boardlens.pipeline.Pt
 import com.boardlens.pipeline.Recognition
+import com.boardlens.ui.theme.Pretendard
 
 private val KeptColor = Color(0xFFFFD400)
 private val RejectedColor = Color(0xFFFF5252)
@@ -34,7 +35,7 @@ private val RejectedColor = Color(0xFFFF5252)
 fun OcrDebugOverlay(recognition: Recognition, modifier: Modifier = Modifier) {
     if (recognition.imageWidth <= 0 || recognition.imageHeight <= 0) return
     val measurer = rememberTextMeasurer()
-    val label = TextStyle(color = Color.Black, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+    val label = TextStyle(color = Color.Black, fontSize = 11.sp, fontWeight = FontWeight.Bold, fontFamily = Pretendard)
 
     BoxWithConstraints(modifier.clearAndSetSemantics { }) {
         val fit = FitTransform.fitCenter(
