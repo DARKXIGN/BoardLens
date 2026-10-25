@@ -83,7 +83,7 @@ No `INTERNET` permission. Real classroom data is collected only under [docs/data
 
 ## Credits
 
-- **Tossface** by Toss Team: the app's icons. BoardLens에는 토스팀에서 제공한 토스페이스가 적용되어 있습니다. Bundled unmodified; license in `app/src/main/assets/licenses/tossface_license.txt`, copyright notice at [toss.im/tossface/copyright](https://toss.im/tossface/copyright).
+- **Tossface** by Toss Team: the app's icons. BoardLens uses Tossface, provided by Toss Team. Bundled unmodified; license in `app/src/main/assets/licenses/tossface_license.txt`, copyright notice at [toss.im/tossface/copyright](https://toss.im/tossface/copyright).
 - **Pretendard** by Kil Hyung-jin: the app's typeface, SIL Open Font License 1.1 (`app/src/main/assets/licenses/pretendard_ofl.txt`).
 - **AndroidSVG** (Apache License 2.0) draws the icons; ML Kit, OpenCV and AndroidX under their own licenses.
 
