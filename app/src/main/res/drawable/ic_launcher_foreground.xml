@@ -1,0 +1,34 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    Launcher icon foreground: a white board with two lines of text and a magnifier.
+    108dp adaptive-icon canvas; the launcher shows the central 72dp (18..90) and may cut it
+    to a circle, so everything stays inside the 66dp safe circle around (54,54).
+-->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <!-- Board -->
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M36,36h30a5,5 0,0 1,5 5v18a5,5 0,0 1,-5 5h-30a5,5 0,0 1,-5 -5v-18a5,5 0,0 1,5 -5z" />
+    <!-- Text lines -->
+    <path
+        android:fillColor="#2563EB"
+        android:pathData="M39,43h17a2,2 0,0 1,0 4h-17a2,2 0,0 1,0 -4z" />
+    <path
+        android:fillColor="#9DBBF7"
+        android:pathData="M39,51h10a2,2 0,0 1,0 4h-10a2,2 0,0 1,0 -4z" />
+    <!-- Magnifier: handle first (its inner end is hidden under the lens), then the lens with a white rim -->
+    <path
+        android:strokeColor="#FFFFFF"
+        android:strokeWidth="5"
+        android:strokeLineCap="round"
+        android:pathData="M68.5,66.5L76,74" />
+    <path
+        android:fillColor="#2563EB"
+        android:strokeColor="#FFFFFF"
+        android:strokeWidth="4"
+        android:pathData="M55.5,63a9.5,9.5 0,1 0,19 0a9.5,9.5 0,1 0,-19 0z" />
+</vector>
