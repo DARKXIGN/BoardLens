@@ -54,7 +54,7 @@ If this policy changes, the updated version will be posted at this address with 
 
 ## Contact
 
-Questions or requests: **[CONTACT EMAIL]**
+Questions or requests: **boardlens@proton.me**
 
 ---
 
@@ -112,4 +112,4 @@ BoardLens는 13세 미만 아동을 대상으로 하지 않으며, 아동의 정
 
 ## 문의
 
-질문이나 요청: **[CONTACT EMAIL]**
+질문이나 요청: **boardlens@proton.me**
