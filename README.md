@@ -79,7 +79,7 @@ Primary metric is character error rate (CER) of ML Kit OCR on the phone, baselin
 
 ## Privacy
 
-No `INTERNET` permission. Real classroom data is collected only under [docs/data-collection.md](docs/data-collection.md): instructor permission, no faces, slides only.
+Camera frames and recognized text never leave the phone. Google ML Kit may send limited diagnostic data to Google; see [PRIVACY.md](PRIVACY.md) for the full privacy policy. Real classroom data is collected only under [docs/data-collection.md](docs/data-collection.md): instructor permission, no faces, slides only.
 
 ## Credits
 
